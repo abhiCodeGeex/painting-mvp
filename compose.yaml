@@ -1,0 +1,77 @@
+name: paint-mvp
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/php/Dockerfile
+  image: paint-mvp-app
+  volumes:
+    - .:/var/www/html
+    - ./docker/php/php.ini:/usr/local/etc/php/conf.d/zz-app.ini:ro
+    # Dependencies live in Docker volumes: reading them from the Windows drive is ~20× slower.
+    - vendor:/var/www/html/vendor
+    - node_modules:/var/www/html/node_modules
+  # No env_file: Laravel reads .env itself, and real env vars would override phpunit.xml.
+  depends_on:
+    pgsql:
+      condition: service_healthy
+    redis:
+      condition: service_started
+
+services:
+  app:
+    <<: *app
+    ports:
+      - "8090:8000"
+
+  vite:
+    <<: *app
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
+    ports:
+      - "5174:5174"
+    profiles: ["dev"]
+
+  # Queue worker (sends emails and notifications) and scheduler start with the app.
+  horizon:
+    <<: *app
+    command: ["php", "artisan", "horizon"]
+
+  scheduler:
+    <<: *app
+    command: ["php", "artisan", "schedule:work"]
+
+  pgsql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: paint_mvp
+      POSTGRES_USER: paint
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "25432:5432"
+    volumes:
+      - pgsql-data:/var/lib/postgresql/data
+      - ./docker/pgsql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paint -d paint_mvp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "18026:8025"
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+
+volumes:
+  pgsql-data:
+  redis-data:
+  vendor:
+  node_modules:
