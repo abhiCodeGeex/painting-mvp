@@ -1,7 +1,33 @@
-import type { CatalogOptions, EnquiryLine } from '@/types/portal';
-import type { PreviewFrame, PreviewMat } from './wall-preview';
+import type { CatalogOptions } from '@/types/portal';
 
 export type GlazingLook = 'none' | 'standard' | 'low';
+
+export interface PreviewFrame {
+    colour: string;
+    width_mm: number;
+    depth_mm?: number;
+    finish: string;
+}
+
+export interface PreviewMat {
+    colour: string;
+    core_colour: string;
+    border_mm: number;
+    bottom_weight_mm?: number;
+}
+
+export const WALL_COLOURS: { name: string; hex: string }[] = [
+    { name: 'Warm white', hex: '#EDE8E1' },
+    { name: 'Pure white', hex: '#F7F7F5' },
+    { name: 'Greige', hex: '#CFC6BA' },
+    { name: 'Sage', hex: '#B7C2A8' },
+    { name: 'Terracotta', hex: '#C77B5A' },
+    { name: 'Dusty pink', hex: '#D9B3AC' },
+    { name: 'Navy', hex: '#2E3A55' },
+    { name: 'Charcoal', hex: '#3C3C3C' },
+];
+
+export const SAMPLE_GRADIENT = 'linear-gradient(135deg,#f6d365 0%,#fda085 35%,#a1c4fd 70%,#5b7db1 100%)';
 
 /** Frame/mat/depth/glazing for the previews, from the ids chosen on a line. */
 export function previewParts(
@@ -34,6 +60,20 @@ export function previewParts(
     };
 }
 
-export function linePreviewParts(options: CatalogOptions, line: EnquiryLine) {
-    return previewParts(options, line);
+/** Outer size (mm) of the finished piece: picture + mat + frame. */
+export function outerSize(widthMm: number, heightMm: number, frame: PreviewFrame | null, mat: PreviewMat | null) {
+    const m = mat?.border_mm ?? 0;
+    const f = frame?.width_mm ?? 0;
+    return {
+        width: widthMm + 2 * m + 2 * f,
+        height: heightMm + 2 * m + (mat?.bottom_weight_mm ?? 0) + 2 * f,
+    };
+}
+
+export function isLight(hex: string): boolean {
+    const c = hex.replace('#', '');
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 > 140;
 }

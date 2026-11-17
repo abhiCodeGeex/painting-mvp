@@ -3,7 +3,8 @@
 Artwork quotation and approval platform: customers send enquiries for catalog paintings, custom creations or framing, preview them on a wall, and approve or reject a formal quotation.
 
 - Full product spec: [docs/SPEC.md](docs/SPEC.md)
-- Stack: Laravel 12 · Filament 5 (admin) · Inertia + React + TypeScript (customer portal) · PostgreSQL 16 · Redis · Gotenberg (PDF)
+- Stack: Laravel 12 · Filament 5 (admin) · Inertia + Angular 21 + TypeScript (customer portal) · PostgreSQL 16 · Redis · Gotenberg (PDF)
+- Branches: `angular-laravel` (this one, Angular portal) and `react-laravel` (same features, React portal). The Laravel side is identical.
 - Locale: English, INR (₹, Indian digit grouping), GST, timezone Asia/Kolkata
 
 ## Running locally (Docker)
@@ -68,7 +69,9 @@ app/Filament          Admin panel resources, pages, widgets
 app/Http/Controllers  Customer portal (Inertia) controllers
 app/Settings          Company & app settings (spatie/laravel-settings)
 app/Support           Small helpers (Money)
-resources/js          React portal (pages, components)
+resources/js          Angular portal: pages/ (one standalone component per Inertia page),
+                      inertia/ (Angular Inertia client: router, forms, links),
+                      ui/ (shadcn-style primitives), components/enquiry/ (editor, 3D room)
 docker/               Dev image and Postgres init
 docs/SPEC.md          Product specification
 ```

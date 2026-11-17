@@ -265,7 +265,16 @@ export interface CustomerQuote {
     lead_time: string | null;
     payment_terms: string | null;
     note_to_customer: string | null;
-    lines: { id: number; title: string; spec: string | null; quantity: number; unit_price: number; discount_amount: number; line_total: number; is_optional: boolean }[];
+    lines: {
+        id: number;
+        title: string;
+        spec: string | null;
+        quantity: number;
+        unit_price: number;
+        discount_amount: number;
+        line_total: number;
+        is_optional: boolean;
+    }[];
     extras: { name: string; inclusion: string; inclusion_label: string; amount: number }[];
     items_total: number;
     extras_total: number;
