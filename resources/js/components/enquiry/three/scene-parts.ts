@@ -50,7 +50,8 @@ export function buildRoom(
     sky?: THREE.Texture,
 ): THREE.Group {
     const group = new THREE.Group();
-    const wallMaterial = () => new THREE.MeshStandardMaterial({ color: wallColour, roughness: 0.95 });
+    // Named "wall" so a colour change can repaint it in place.
+    const wallMaterial = () => new THREE.MeshStandardMaterial({ name: 'wall', color: wallColour, roughness: 0.95 });
 
     const back = new THREE.Mesh(new THREE.PlaneGeometry(wallW, wallH), wallMaterial());
     back.position.set(0, wallH / 2, 0);
@@ -199,6 +200,23 @@ export interface ArtDims {
 }
 
 /** The framed artwork: picture (or stretched canvas block), mat with bevel, frame, glass, back panel. */
+/**
+ * Artwork surface material with a crisper image: the mipmap level is biased one notch finer
+ * (texture LOD bias -0.6), so a large image shown small stays sharp instead of soft. Anisotropic
+ * filtering keeps it free of shimmer. One shared shader variant (stable program cache key).
+ */
+function artworkMaterial(params: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
+    const material = new THREE.MeshStandardMaterial(params);
+    material.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <map_fragment>',
+            THREE.ShaderChunk.map_fragment.replace('texture2D( map, vMapUv )', 'texture2D( map, vMapUv, -0.6 )'),
+        );
+    };
+    material.customProgramCacheKey = () => 'artwork-crisp';
+    return material;
+}
+
 export function buildArtwork(
     d: ArtDims,
     opts: {
@@ -249,13 +267,13 @@ export function buildArtwork(
         const side =
             edgeStyle === 'solid_colour'
                 ? new THREE.MeshStandardMaterial({ color: '#f1efe9', roughness: 0.9 })
-                : new THREE.MeshStandardMaterial({ map: texture, roughness: 0.85, color: '#d9d9d9' });
+                : artworkMaterial({ map: texture, roughness: 0.85, color: '#d9d9d9' });
         const materials = [
             side,
             side,
             side,
             side,
-            new THREE.MeshStandardMaterial({ map: texture, roughness: 0.85 }),
+            artworkMaterial({ map: texture, roughness: 0.85 }),
             new THREE.MeshStandardMaterial({ color: '#cfc8bd' }),
         ];
         const block = new THREE.Mesh(new THREE.BoxGeometry(d.picW, d.picH, canvasDepth), materials);
@@ -264,7 +282,7 @@ export function buildArtwork(
         block.receiveShadow = false;
         group.add(block);
     } else {
-        const picture = new THREE.Mesh(new THREE.PlaneGeometry(d.picW, d.picH), new THREE.MeshStandardMaterial({ map: texture, roughness: 0.8 }));
+        const picture = new THREE.Mesh(new THREE.PlaneGeometry(d.picW, d.picH), artworkMaterial({ map: texture, roughness: 0.8 }));
         picture.position.set(0, picY, faceZ);
         // No shadow-map on the print itself: a flat plane a few mm in front of the wall gets shadow
         // "acne" (fine stripes) at grazing sun angles. The frame's shade comes from the contact shadows.
@@ -322,14 +340,14 @@ export function buildArtwork(
                     roughness: 0.02,
                     metalness: 0,
                     specularIntensity: glazing === 'low' ? 0.12 : 1,
-                    envMapIntensity: glazing === 'low' ? 0.15 : 1.6,
+                    envMapIntensity: glazing === 'low' ? 0.12 : 0.7,
                     transparent: true,
                     blending: THREE.AdditiveBlending,
                     depthWrite: false,
                 }),
             );
             glass.position.set(0, 0, faceZ + 0.004);
-            glass.name = 'glass'; // gets a live reflection of the room (see Room3D.updateReflections)
+            glass.name = 'glass'; // reflects the room's lighting environment
             group.add(glass);
         }
 
