@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f1ec"/><stop offset="1" stop-color="#e6e0d6"/></linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a3532"/><stop offset="1" stop-color="#1e1b19"/></linearGradient>
+    <linearGradient id="kraft" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ddc196"/><stop offset="1" stop-color="#c39f6f"/></linearGradient>
+    <filter id="sh"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#5b4632" flood-opacity=".28"/></filter>
+    <pattern id="fib" width="12" height="12" patternUnits="userSpaceOnUse"><path d="M0 6 q3 -2 6 0 t6 0" stroke="#a88456" stroke-opacity=".18" fill="none"/></pattern>
+  </defs>
+  <rect width="640" height="480" fill="url(#bg)"/>
+  <g filter="url(#sh)">
+    <rect x="90" y="60" width="460" height="340" rx="5" fill="url(#wood)"/>
+    <rect x="106" y="76" width="428" height="308" fill="url(#kraft)"/>
+    <rect x="106" y="76" width="428" height="308" fill="url(#fib)"/>
+  </g>
+  <g fill="#e9dcc5" opacity=".9">
+    <rect x="106" y="76" width="428" height="14"/><rect x="106" y="370" width="428" height="14"/>
+    <rect x="106" y="76" width="14" height="308"/><rect x="520" y="76" width="14" height="308"/>
+  </g>
+  <g>
+    <rect x="370" y="290" width="140" height="74" rx="4" fill="#fffdf8" stroke="#cbb89a"/>
+    <rect x="384" y="304" width="70" height="7" rx="3" fill="#b9a587"/>
+    <rect x="384" y="320" width="110" height="5" rx="2" fill="#d6c8b0"/>
+    <rect x="384" y="332" width="96" height="5" rx="2" fill="#d6c8b0"/>
+    <rect x="384" y="344" width="104" height="5" rx="2" fill="#d6c8b0"/>
+  </g>
+  <g transform="translate(320 205)">
+    <path d="M0 -62 L52 -42 V8 C52 42 26 62 0 72 C-26 62 -52 42 -52 8 V-42 Z" fill="#fff" fill-opacity=".55" stroke="#8a6a44" stroke-width="3"/>
+    <path d="M-20 4 L-5 20 L24 -14" fill="none" stroke="#8a6a44" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="320" y="446" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="600" fill="#3d3328">Sealed dust-cover backing</text>
+</svg>

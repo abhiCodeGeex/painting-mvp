@@ -6,6 +6,7 @@ use App\Enums\ArtworkPricingModel;
 use App\Enums\ArtworkType;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MoneyInput;
+use App\Models\Category;
 use App\Models\StandardSize;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Repeater;
@@ -61,8 +62,9 @@ class ArtworkForm
                         TextInput::make('name')->required()->maxLength(255),
                     ]),
                 Select::make('categories')
-                    ->label('Categories & styles')
-                    ->relationship('categories', 'name')
+                    ->label('Categories')
+                    ->relationship('categories', 'name', fn ($query) => $query->with('parent')->orderBy('parent_id')->orderBy('sort_order'))
+                    ->getOptionLabelFromRecordUsing(fn (Category $record) => $record->fullName())
                     ->multiple()
                     ->preload()
                     ->searchable(),
@@ -70,7 +72,13 @@ class ArtworkForm
                     ->options(ArtworkType::class)
                     ->required()
                     ->native(false)
-                    ->live(),
+                    ->live()
+                    ->helperText(function (Get $get): string {
+                        $type = $get('type');
+                        $type = $type instanceof ArtworkType ? $type : ArtworkType::tryFrom((string) $type);
+
+                        return $type?->getDescription() ?? 'Original = the painting itself; print = reproductions of it.';
+                    }),
                 TextInput::make('edition_size')
                     ->label('Edition size')
                     ->integer()

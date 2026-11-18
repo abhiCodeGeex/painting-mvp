@@ -46,9 +46,26 @@ class QuoteResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_SALES;
 
+    protected static ?string $navigationLabel = 'Quotes';
+
     protected static ?int $navigationSort = 20;
 
     protected static ?string $recordTitleAttribute = 'number';
+
+    /**
+     * Sidebar badge: draft quotes not yet sent to the customer.
+     */
+    public static function getNavigationBadge(): ?string
+    {
+        $count = static::getModel()::where('status', QuoteStatus::Draft)->count();
+
+        return $count ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        return 'Draft quotes to send';
+    }
 
     public static function table(Table $table): Table
     {

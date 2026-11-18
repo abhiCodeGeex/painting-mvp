@@ -16,7 +16,6 @@ use App\Models\Enquiry;
 use App\Models\EnquiryLine;
 use App\Models\ExtraCharge;
 use App\Models\Quote;
-use App\Models\QuoteLine;
 use App\Models\User;
 use App\Notifications\QuoteSent;
 use App\Settings\CompanySettings;

@@ -33,7 +33,7 @@ class TaxResource extends MasterResource
 
     protected static ?string $modelLabel = 'GST rate';
 
-    protected static ?int $navigationSort = 20;
+    protected static ?int $navigationSort = 40;
 
     protected static ?string $recordTitleAttribute = 'name';
 

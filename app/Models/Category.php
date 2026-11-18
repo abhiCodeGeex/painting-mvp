@@ -50,4 +50,10 @@ class Category extends Model
     {
         return $this->belongsToMany(Artwork::class);
     }
+
+    /** "Parent › Child" for subcategories, the name for top-level ones. */
+    public function fullName(): string
+    {
+        return $this->parent ? "{$this->parent->name} › {$this->name}" : $this->name;
+    }
 }

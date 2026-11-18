@@ -1,7 +1,7 @@
 import * as THREE from 'three';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 /*
  * Real furniture, floor texture and interior lighting for the 3D room.
@@ -55,7 +55,24 @@ async function model(name: string): Promise<THREE.Group> {
         promise = gltf.loadAsync(`${BASE}/models/${name}.glb`).then((result) => {
             result.scene.traverse((child) => {
                 const mesh = child as THREE.Mesh;
-                if (mesh.isMesh) mesh.castShadow = mesh.receiveShadow = true;
+                if (!mesh.isMesh) return;
+                mesh.castShadow = mesh.receiveShadow = true;
+                for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+                    const m = material as THREE.MeshStandardMaterial;
+                    // Sharp textures at grazing angles.
+                    for (const map of [m.map, m.normalMap, m.roughnessMap, m.metalnessMap, m.aoMap, m.alphaMap]) {
+                        if (map) map.anisotropy = 8;
+                    }
+                    // Cut-out foliage (leaves): smooth, fringe-free edges via MSAA alpha-to-coverage
+                    // instead of hard alpha testing or unsorted blending.
+                    if (m.alphaTest > 0 || m.transparent) {
+                        m.transparent = false;
+                        m.alphaTest = 0.5;
+                        m.alphaToCoverage = true;
+                        m.depthWrite = true;
+                        m.needsUpdate = true;
+                    }
+                }
             });
             return result.scene;
         });
@@ -102,7 +119,12 @@ export async function loadRoomBase(renderer: THREE.WebGLRenderer): Promise<RoomB
 export async function loadFurniture(style: RoomStyle): Promise<Furniture> {
     switch (style) {
         case 'bedroom': {
-            const [bed, left, right, vase] = await Promise.all([model('GothicBed_01'), model('ClassicNightstand_01'), model('ClassicNightstand_01'), model('ceramic_vase_01')]);
+            const [bed, left, right, vase] = await Promise.all([
+                model('GothicBed_01'),
+                model('ClassicNightstand_01'),
+                model('ClassicNightstand_01'),
+                model('ceramic_vase_01'),
+            ]);
             const group = new THREE.Group();
             group.add(bed, left, right, vase);
             const bedBox = place(bed, 0);
@@ -124,12 +146,20 @@ export async function loadFurniture(style: RoomStyle): Promise<Furniture> {
             return { group, width: p.max.x - Math.min(deskBox.min.x, chairBox.min.x), hangAbove: deskBox.max.y };
         }
         case 'dining': {
-            const [table, c1, c2, vase] = await Promise.all([model('dining_table'), model('dining_chair_02'), model('dining_chair_02'), model('ceramic_vase_01')]);
+            const [table, c1, c2, vase] = await Promise.all([
+                model('dining_table'),
+                model('dining_chair_02'),
+                model('dining_chair_02'),
+                model('ceramic_vase_01'),
+            ]);
             const group = new THREE.Group();
             group.add(table, c1, c2, vase);
             const tableBox = place(table, 0, 0.35);
             // Two chairs on the room side, facing the wall, tucked in a little.
-            for (const [chair, x] of [[c1, -0.45], [c2, 0.45]] as const) {
+            for (const [chair, x] of [
+                [c1, -0.45],
+                [c2, 0.45],
+            ] as const) {
                 chair.rotation.y = Math.PI;
                 place(chair, x, tableBox.max.z - 0.25);
             }
@@ -137,7 +167,12 @@ export async function loadFurniture(style: RoomStyle): Promise<Furniture> {
             return { group, width: size(table).x, hangAbove: tableBox.max.y };
         }
         case 'lobby': {
-            const [console, a1, a2, vase] = await Promise.all([model('ClassicConsole_01'), model('ArmChair_01'), model('ArmChair_01'), model('ceramic_vase_01')]);
+            const [console, a1, a2, vase] = await Promise.all([
+                model('ClassicConsole_01'),
+                model('ArmChair_01'),
+                model('ArmChair_01'),
+                model('ceramic_vase_01'),
+            ]);
             const group = new THREE.Group();
             group.add(console, a1, a2, vase);
             const consoleBox = place(console, 0);
@@ -150,7 +185,12 @@ export async function loadFurniture(style: RoomStyle): Promise<Furniture> {
             return { group, width: right.max.x - left.min.x, hangAbove: consoleBox.max.y };
         }
         default: {
-            const [sofa, table, vase, plant] = await Promise.all([model('sofa_02'), model('side_table_01'), model('ceramic_vase_01'), model('potted_plant_02')]);
+            const [sofa, table, vase, plant] = await Promise.all([
+                model('sofa_02'),
+                model('side_table_01'),
+                model('ceramic_vase_01'),
+                model('potted_plant_02'),
+            ]);
             const group = new THREE.Group();
             group.add(sofa, table, vase, plant);
             const sofaBox = place(sofa, 0);

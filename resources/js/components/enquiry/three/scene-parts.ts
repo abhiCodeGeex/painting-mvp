@@ -71,8 +71,14 @@ export function buildRoom(
 
     let floorMaterial: THREE.MeshStandardMaterial;
     if (realFloor) {
-        for (const t of [realFloor.map, realFloor.normalMap, realFloor.roughnessMap]) t.repeat.set(wallW / realFloor.tile, ROOM_DEPTH / realFloor.tile);
-        floorMaterial = new THREE.MeshStandardMaterial({ map: realFloor.map, normalMap: realFloor.normalMap, roughnessMap: realFloor.roughnessMap, roughness: 1 });
+        for (const t of [realFloor.map, realFloor.normalMap, realFloor.roughnessMap])
+            t.repeat.set(wallW / realFloor.tile, ROOM_DEPTH / realFloor.tile);
+        floorMaterial = new THREE.MeshStandardMaterial({
+            map: realFloor.map,
+            normalMap: realFloor.normalMap,
+            roughnessMap: realFloor.roughnessMap,
+            roughness: 1,
+        });
     } else {
         floorTexture.repeat.set(wallW / 1.2, ROOM_DEPTH / 1.2);
         floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.7 });
@@ -124,7 +130,10 @@ function buildWindow(wallW: number, sky?: THREE.Texture): THREE.Group {
     group.add(box(0.2, 0.03, w + 0.2, white, [x - 0.08, sill - 0.015, z]));
 
     // Sky seen through the window (does not block the sun).
-    const skyPlane = new THREE.Mesh(new THREE.PlaneGeometry(6, 4), new THREE.MeshBasicMaterial({ map: sky ?? null, color: sky ? '#ffffff' : '#cfe3f5', toneMapped: false }));
+    const skyPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(6, 4),
+        new THREE.MeshBasicMaterial({ map: sky ?? null, color: sky ? '#ffffff' : '#cfe3f5', toneMapped: false }),
+    );
     skyPlane.position.set(x + 1.2, cy + 0.4, z);
     skyPlane.rotation.y = -Math.PI / 2;
     skyPlane.castShadow = false;
@@ -212,6 +221,29 @@ export function buildArtwork(
     // Picture centre is shifted up when the mat has a weighted bottom.
     const picY = d.matBottom / 2;
 
+    // ---- soft shadow on the wall ----
+    // The piece stands off the wall by its depth; light from above throws a soft shadow mostly
+    // below it. A pre-blurred texture: no per-frame cost, no noise, no aliasing.
+    const standOff = Math.max(frameDepth, canvasDepth, 0.004);
+    const spread = 0.02 + standOff * 1.6;
+    const shadow = new THREE.Mesh(
+        new THREE.PlaneGeometry(d.outerW + 2 * spread, d.outerH + 2 * spread),
+        new THREE.MeshBasicMaterial({
+            map: dropShadowTexture(d.outerW, d.outerH, spread),
+            transparent: true,
+            opacity: Math.min(0.6, 0.32 + standOff * 6),
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            toneMapped: false,
+        }),
+    );
+    // Light comes from above: the shadow falls a little lower than the piece.
+    shadow.position.set(0, -standOff * 0.7, 0.0005);
+    shadow.renderOrder = -1;
+    shadow.name = 'wall-shadow';
+    group.add(shadow);
+
     // ---- picture ----
     if (canvasDepth > 0) {
         const side =
@@ -228,12 +260,16 @@ export function buildArtwork(
         ];
         const block = new THREE.Mesh(new THREE.BoxGeometry(d.picW, d.picH, canvasDepth), materials);
         block.position.set(0, picY, faceZ - canvasDepth / 2);
-        block.castShadow = block.receiveShadow = true;
+        block.castShadow = true;
+        block.receiveShadow = false;
         group.add(block);
     } else {
         const picture = new THREE.Mesh(new THREE.PlaneGeometry(d.picW, d.picH), new THREE.MeshStandardMaterial({ map: texture, roughness: 0.8 }));
         picture.position.set(0, picY, faceZ);
-        picture.castShadow = picture.receiveShadow = true;
+        // No shadow-map on the print itself: a flat plane a few mm in front of the wall gets shadow
+        // "acne" (fine stripes) at grazing sun angles. The frame's shade comes from the contact shadows.
+        picture.castShadow = true;
+        picture.receiveShadow = false;
         group.add(picture);
     }
 
@@ -276,17 +312,20 @@ export function buildArtwork(
         if (glazing !== 'none') {
             const glass = new THREE.Mesh(
                 new THREE.PlaneGeometry(d.outerW - 2 * d.frameW, d.outerH - 2 * d.frameW),
-                // Real glass: the picture is seen through it (transmission) and the room is reflected
-                // in it, stronger at grazing angles (Fresnel). Museum / anti-reflective glass barely reflects.
+                // Glass as a pure reflection layer, added on top of the picture: a black base adds
+                // nothing, so the artwork stays perfectly sharp and true in colour; the room and the sun
+                // are reflected with real glass Fresnel (≈4% head-on, stronger at grazing angles).
+                // Museum / anti-reflective glass barely reflects. (Transmission blurred the art and
+                // rendered the whole scene a second time every frame.)
                 new THREE.MeshPhysicalMaterial({
-                    transmission: 1,
-                    thickness: 0.002,
-                    ior: 1.5,
-                    roughness: 0,
+                    color: '#000000',
+                    roughness: 0.02,
                     metalness: 0,
-                    specularIntensity: glazing === 'low' ? 0.08 : 1,
-                    envMapIntensity: glazing === 'low' ? 0.12 : 1.4,
-                    color: '#ffffff',
+                    specularIntensity: glazing === 'low' ? 0.12 : 1,
+                    envMapIntensity: glazing === 'low' ? 0.15 : 1.6,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
                 }),
             );
             glass.position.set(0, 0, faceZ + 0.004);
@@ -348,6 +387,33 @@ export function buildEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
     return texture;
 }
 
+/**
+ * Soft shadow texture for one piece: a black rectangle the size of the piece (w × h metres)
+ * whose edges fade out over `spread` metres. Drawn once per piece (small canvas, no per-frame cost).
+ */
+export function dropShadowTexture(w: number, h: number, spread: number): THREE.Texture {
+    const pxPerM = 512 / (Math.max(w, h) + 2 * spread);
+    const cw = Math.round((w + 2 * spread) * pxPerM);
+    const ch = Math.round((h + 2 * spread) * pxPerM);
+    const c = document.createElement('canvas');
+    c.width = cw;
+    c.height = ch;
+    const g = c.getContext('2d')!;
+    // Canvas shadowBlur (supported everywhere, unlike ctx.filter on older Safari): draw the
+    // rectangle off-canvas and keep only its blurred shadow.
+    // Gaussian falloff reaches ~1.5 × blur: keep it inside the canvas so no edge is ever visible.
+    const blur = spread * pxPerM * 0.6;
+    const inset = spread * pxPerM;
+    g.shadowColor = '#000';
+    g.shadowBlur = blur;
+    g.shadowOffsetX = cw * 4;
+    g.fillStyle = '#000';
+    g.fillRect(inset - cw * 4, inset, cw - 2 * inset, ch - 2 * inset);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+}
+
 /** Colourful placeholder used until an image is chosen. */
 export function gradientTexture(): THREE.Texture {
     const c = document.createElement('canvas');
@@ -406,7 +472,7 @@ export function woodTexture(): THREE.Texture {
 export function coverTexture(source: THREE.Texture, picW: number, picH: number): THREE.Texture {
     const t = source.clone();
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 4;
+    t.anisotropy = Math.max(source.anisotropy, 8);
     const img = source.image as { width: number; height: number } | undefined;
     if (img?.width && img.height) {
         const imageAspect = img.width / img.height;
@@ -429,6 +495,10 @@ export function disposeTree(object: THREE.Object3D): void {
         const mesh = child as THREE.Mesh;
         mesh.geometry?.dispose();
         const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
-        (Array.isArray(material) ? material : material ? [material] : []).forEach((m) => m.dispose());
+        (Array.isArray(material) ? material : material ? [material] : []).forEach((m) => {
+            // Per-piece wall shadows own their texture.
+            if (mesh.name === 'wall-shadow') (m as THREE.MeshBasicMaterial).map?.dispose();
+            m.dispose();
+        });
     });
 }

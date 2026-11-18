@@ -13,6 +13,7 @@ class DatabaseSeeder extends Seeder
             AdminUserSeeder::class,
             StateSeeder::class,
             MasterDataSeeder::class,
+            CategorySeeder::class,
         ]);
 
         // Demo catalog, customer and enquiries for local development only.

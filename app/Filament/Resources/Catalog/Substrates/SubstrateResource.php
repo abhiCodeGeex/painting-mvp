@@ -3,6 +3,10 @@
 namespace App\Filament\Resources\Catalog\Substrates;
 
 use App\Enums\EdgeStyle;
+use App\Enums\PrintingMethod;
+use App\Enums\SubstrateFinish;
+use App\Enums\SubstrateMaterial;
+use App\Enums\SubstrateUnit;
 use App\Filament\Resources\Catalog\Substrates\Pages\ManageSubstrates;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MasterResource;
@@ -12,6 +16,8 @@ use App\Models\Substrate;
 use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
 use Filament\Forms\Components\CheckboxList;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -21,7 +27,9 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use UnitEnum;
 
 /**
@@ -33,9 +41,11 @@ class SubstrateResource extends MasterResource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquare3Stack3d;
 
-    protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_CATALOG;
+    protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_MATERIALS;
 
-    protected static ?int $navigationSort = 50;
+    protected static ?string $navigationLabel = 'Substrates';
+
+    protected static ?int $navigationSort = 10;
 
     protected static ?string $recordTitleAttribute = 'name';
 
@@ -48,6 +58,22 @@ class SubstrateResource extends MasterResource
                 ->unique(ignoreRecord: true)
                 ->placeholder('e.g. Stretched canvas 38 mm')
                 ->columnSpanFull(),
+
+            Section::make('Specifications')
+                ->columns(2)
+                ->schema([
+                    Select::make('material_type')->label('Material type')->options(SubstrateMaterial::class)->native(false),
+                    Select::make('finish')->options(SubstrateFinish::class)->native(false),
+                    TextInput::make('thickness_mm')->label('Thickness')->numeric()->minValue(0)->step(0.1)->suffix('mm'),
+                    TextInput::make('gsm')->label('GSM')->numeric()->integer()->minValue(0)->helperText('Paper and canvas weight.'),
+                    CheckboxList::make('printing_methods')->label('Printing method')->options(PrintingMethod::class)->columns(3),
+                    Select::make('unit')->options(SubstrateUnit::class)->native(false)->helperText('How it is bought / stocked.'),
+                    TagsInput::make('available_sizes')
+                        ->label('Available sizes (inches)')
+                        ->placeholder('e.g. 12×18')
+                        ->suggestions(['8×10', '12×12', '12×18', '16×20', '18×24', '20×30', '24×36', '30×40', '36×48']),
+                    TextInput::make('supplier')->maxLength(255)->placeholder('Supplier name'),
+                ]),
 
             Section::make('Construction')
                 ->columns(2)
@@ -88,11 +114,38 @@ class SubstrateResource extends MasterResource
     {
         return MasterTable::configure($table, [
             TextColumn::make('name')->searchable(),
-            MasterTable::mm('depth_mm', 'Depth'),
-            IconColumn::make('allows_glazing')->label('Glazing')->boolean(),
-            IconColumn::make('allows_mat')->label('Mat')->boolean(),
-            IconColumn::make('requires_frame')->label('Needs frame')->boolean(),
+            TextColumn::make('material_type')->label('Material')->badge()->placeholder('—'),
+            TextColumn::make('thickness_gsm')
+                ->label('Thickness / GSM')
+                ->state(fn (Substrate $record) => collect([
+                    $record->thickness_mm !== null ? rtrim(rtrim((string) $record->thickness_mm, '0'), '.').' mm' : null,
+                    $record->gsm ? "{$record->gsm} GSM" : null,
+                ])->filter()->implode(', ') ?: null)
+                ->placeholder('—'),
+            TextColumn::make('finish')->placeholder('—'),
+            TextColumn::make('printing_methods')
+                ->label('Printing')
+                ->badge()
+                ->formatStateUsing(fn ($state) => PrintingMethod::tryFrom((string) $state)?->getLabel() ?? $state)
+                ->placeholder('—'),
+            TextColumn::make('available_sizes')->label('Sizes')->badge()->color('gray')->toggleable()->placeholder('—'),
+            TextColumn::make('supplier')->placeholder('—')->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('unit')->placeholder('—')->toggleable(),
+            MasterTable::mm('depth_mm', 'Depth')->toggleable(isToggledHiddenByDefault: true),
+            IconColumn::make('allows_glazing')->label('Glazing')->boolean()->toggleable(isToggledHiddenByDefault: true),
+            IconColumn::make('allows_mat')->label('Mat')->boolean()->toggleable(isToggledHiddenByDefault: true),
+            IconColumn::make('requires_frame')->label('Needs frame')->boolean()->toggleable(isToggledHiddenByDefault: true),
             MasterTable::money('cost_per_m2', 'Cost / m²'),
+        ], [
+            SelectFilter::make('material_type')->label('Material type')->options(SubstrateMaterial::class),
+            SelectFilter::make('finish')->options(SubstrateFinish::class),
+            SelectFilter::make('printing_method')
+                ->label('Printing method')
+                ->options(PrintingMethod::class)
+                ->query(fn (Builder $query, array $data) => filled($data['value'] ?? null)
+                    ? $query->whereJsonContains('printing_methods', $data['value'])
+                    : $query),
+            SelectFilter::make('unit')->options(SubstrateUnit::class),
         ]);
     }
 

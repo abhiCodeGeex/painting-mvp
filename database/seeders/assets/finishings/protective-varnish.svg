@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f1ec"/><stop offset="1" stop-color="#e6e0d6"/></linearGradient>
+    <linearGradient id="art" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3d9b1"/><stop offset=".45" stop-color="#e9a77f"/><stop offset="1" stop-color="#6f8fb8"/></linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".75"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="handle" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8a5a32"/><stop offset=".5" stop-color="#c58b55"/><stop offset="1" stop-color="#7a4c28"/></linearGradient>
+    <linearGradient id="ferrule" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7c848d"/><stop offset=".5" stop-color="#eef0f2"/><stop offset="1" stop-color="#6c747d"/></linearGradient>
+    <clipPath id="c"><path d="M110 120 L470 80 L520 380 L150 420 Z"/></clipPath>
+    <filter id="sh"><feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#5b4632" flood-opacity=".28"/></filter>
+  </defs>
+  <rect width="640" height="480" fill="url(#bg)"/>
+  <g filter="url(#sh)">
+    <path d="M110 120 L470 80 L520 380 L150 420 Z" fill="url(#art)"/>
+    <path d="M150 420 L520 380 L524 396 L154 436 Z" fill="#efe9df"/>
+  </g>
+  <g clip-path="url(#c)" opacity=".9">
+    <circle cx="230" cy="210" r="90" fill="#fff3dc" opacity=".45"/>
+    <circle cx="420" cy="310" r="110" fill="#46608c" opacity=".35"/>
+    <path d="M110 120 L300 99 L340 400 L150 420 Z" fill="#fff" opacity=".08"/>
+    <path d="M140 60 L240 50 L330 470 L230 480 Z" fill="url(#gloss)" opacity=".85"/>
+  </g>
+  <g transform="rotate(-18 470 170)">
+    <rect x="440" y="40" width="24" height="120" rx="10" fill="url(#handle)"/>
+    <rect x="436" y="150" width="32" height="34" rx="4" fill="url(#ferrule)"/>
+    <path d="M436 184 h32 l-4 46 q-12 8 -24 0 Z" fill="#e6c79a"/>
+    <path d="M440 214 q12 8 24 0" stroke="#fff" stroke-opacity=".8" stroke-width="3" fill="none"/>
+  </g>
+  <g fill="#fff"><path d="M210 150 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5z"/><path d="M265 300 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z"/></g>
+  <text x="320" y="468" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="600" fill="#3d3328">UV &amp; dust protective varnish</text>
+</svg>

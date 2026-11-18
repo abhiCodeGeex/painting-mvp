@@ -13,12 +13,14 @@ use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\SpatieMediaLibraryFileUpload;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\SpatieMediaLibraryImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
@@ -64,6 +66,14 @@ class FinishingResource extends MasterResource
                 ->columnSpanFull()
                 ->helperText('Leave empty to offer it for every substrate.'),
             Textarea::make('description')->rows(2)->columnSpanFull(),
+            SpatieMediaLibraryFileUpload::make('picture')
+                ->label('Picture')
+                ->collection('picture')
+                ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'])
+                ->maxSize(5120)
+                ->imagePreviewHeight('220')
+                ->helperText('Photo or diagram of the hardware. Shown to staff and in the customer\'s finishing options.')
+                ->columnSpanFull(),
             ...MasterForm::status(),
         ])->columns(2);
     }
@@ -71,7 +81,13 @@ class FinishingResource extends MasterResource
     public static function table(Table $table): Table
     {
         return MasterTable::configure($table, [
-            TextColumn::make('name')->searchable(),
+            SpatieMediaLibraryImageColumn::make('picture')
+                ->label('Preview')
+                ->collection('picture')
+                ->imageWidth(120)
+                ->imageHeight(90)
+                ->extraImgAttributes(['class' => 'rounded-md object-cover ring-1 ring-gray-950/10 dark:ring-white/10']),
+            TextColumn::make('name')->searchable()->weight('semibold')->description(fn (Finishing $record) => $record->description),
             TextColumn::make('pricing_type')->label('Charged'),
             MasterTable::money('cost', 'Cost'),
             IconColumn::make('is_default')->label('Default')->boolean(),

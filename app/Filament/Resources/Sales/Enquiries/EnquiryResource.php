@@ -40,6 +40,8 @@ class EnquiryResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_SALES;
 
+    protected static ?string $navigationLabel = 'Enquiries';
+
     protected static ?int $navigationSort = 10;
 
     protected static ?string $recordTitleAttribute = 'reference';
@@ -52,6 +54,11 @@ class EnquiryResource extends Resource
         $count = static::getModel()::whereIn('status', [EnquiryStatus::Submitted, EnquiryStatus::UnderReview])->count();
 
         return $count ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        return 'New enquiries waiting for review';
     }
 
     public static function getNavigationBadgeColor(): ?string

@@ -30,7 +30,7 @@ class ComplexityLevelResource extends MasterResource
 
     protected static ?string $navigationLabel = 'Complexity levels';
 
-    protected static ?int $navigationSort = 40;
+    protected static ?int $navigationSort = 20;
 
     protected static ?string $recordTitleAttribute = 'name';
 

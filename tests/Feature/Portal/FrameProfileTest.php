@@ -1,8 +1,8 @@
 <?php
 
 use App\Enums\FrameProfile;
-use App\Filament\Resources\Framing\Frames\Pages\EditFrame;
 use App\Enums\Role;
+use App\Filament\Resources\Framing\Frames\Pages\EditFrame;
 use App\Http\Presenters\CatalogOptions;
 use App\Models\Frame;
 use App\Models\User;

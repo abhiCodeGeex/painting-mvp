@@ -157,10 +157,16 @@ export class FileGallery {
                         (input)="query.set($any($event.target).value)"
                     />
                 </div>
-                <select ui-select class="sm:w-48" [value]="category()" (change)="category.set($any($event.target).value)">
+                <select ui-select class="sm:w-60" [value]="category()" (change)="category.set($any($event.target).value)">
                     <option value="">All categories</option>
                     @for (c of options().categories; track c) {
-                        <option [value]="c">{{ c }}</option>
+                        <option [value]="c">
+                            @if (c.includes(' › ')) {
+                                &nbsp;&nbsp;↳ {{ c.split(' › ')[1] }}
+                            } @else {
+                                {{ c }}
+                            }
+                        </option>
                     }
                 </select>
             </div>

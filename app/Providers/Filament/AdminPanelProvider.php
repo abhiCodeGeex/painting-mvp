@@ -23,11 +23,15 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 class AdminPanelProvider extends PanelProvider
 {
     /**
-     * Navigation groups from spec §12.1. A group only appears once it has at least one item.
+     * Sidebar groups, in the order the work flows: daily sales work first, then the masters
+     * in set-up order (what we sell -> what it is made of -> framing -> how it is priced),
+     * then reference lists and system. A group only appears once it has at least one item.
      */
-    public const GROUP_SALES = 'Sales';
+    public const GROUP_SALES = 'Sales — enquiries to quotes';
 
-    public const GROUP_CATALOG = 'Catalog';
+    public const GROUP_CATALOG = 'Catalog — what customers choose';
+
+    public const GROUP_MATERIALS = 'Print & materials';
 
     public const GROUP_FRAMING = 'Framing';
 
@@ -35,9 +39,9 @@ class AdminPanelProvider extends PanelProvider
 
     public const GROUP_PREVIEW = 'Preview';
 
-    public const GROUP_LISTS = 'Lists';
+    public const GROUP_LISTS = 'Reference lists';
 
-    public const GROUP_SYSTEM = 'System';
+    public const GROUP_SYSTEM = 'Users & access';
 
     public function panel(Panel $panel): Panel
     {
@@ -53,10 +57,11 @@ class AdminPanelProvider extends PanelProvider
             ->navigationGroups([
                 NavigationGroup::make(self::GROUP_SALES),
                 NavigationGroup::make(self::GROUP_CATALOG),
+                NavigationGroup::make(self::GROUP_MATERIALS),
                 NavigationGroup::make(self::GROUP_FRAMING),
                 NavigationGroup::make(self::GROUP_PRICING),
                 NavigationGroup::make(self::GROUP_PREVIEW),
-                NavigationGroup::make(self::GROUP_LISTS),
+                NavigationGroup::make(self::GROUP_LISTS)->collapsed(),
                 NavigationGroup::make(self::GROUP_SYSTEM)->collapsed(),
             ])
             ->databaseNotifications()

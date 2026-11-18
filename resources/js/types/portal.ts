@@ -192,7 +192,7 @@ export interface CatalogOptions {
     frames: CatalogFrame[];
     mats: CatalogMat[];
     glazings: { id: number; name: string; material: string; reflection: string; max_area_m2: number | null; description: string | null }[];
-    finishings: { id: number; name: string; is_default: boolean; substrate_ids: number[] }[];
+    finishings: { id: number; name: string; description: string | null; picture: string | null; is_default: boolean; substrate_ids: number[] }[];
     quality_tiers: {
         id: number;
         name: string;

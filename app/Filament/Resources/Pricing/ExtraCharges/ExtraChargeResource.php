@@ -33,6 +33,8 @@ class ExtraChargeResource extends MasterResource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_PRICING;
 
+    protected static ?string $navigationLabel = 'Extra charges';
+
     protected static ?int $navigationSort = 30;
 
     protected static ?string $recordTitleAttribute = 'name';

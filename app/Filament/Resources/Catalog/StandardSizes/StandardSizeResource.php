@@ -27,22 +27,24 @@ class StandardSizeResource extends MasterResource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedArrowsPointingOut;
 
-    protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_CATALOG;
+    protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_MATERIALS;
 
-    protected static ?int $navigationSort = 60;
+    protected static ?string $navigationLabel = 'Standard sizes';
+
+    protected static ?int $navigationSort = 30;
 
     protected static ?string $recordTitleAttribute = 'label';
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            MasterForm::mm('width_mm', 'Width')->required()->minValue(10)->live(onBlur: true),
-            MasterForm::mm('height_mm', 'Height')->required()->minValue(10)->live(onBlur: true),
+            MasterForm::cm('width_mm', 'Width')->required()->minValue(1)->live(onBlur: true),
+            MasterForm::cm('height_mm', 'Height')->required()->minValue(1)->live(onBlur: true),
             TextInput::make('label')
                 ->maxLength(50)
                 ->columnSpanFull()
-                ->placeholder(fn (Get $get): string => ((int) $get('width_mm') && (int) $get('height_mm'))
-                    ? StandardSize::defaultLabel((int) $get('width_mm'), (int) $get('height_mm'))
+                ->placeholder(fn (Get $get): string => ((float) $get('width_mm') && (float) $get('height_mm'))
+                    ? StandardSize::defaultLabel((int) round((float) $get('width_mm') * 10), (int) round((float) $get('height_mm') * 10))
                     : 'e.g. A2 or 50 × 70 cm')
                 ->helperText('Leave blank to use the size in cm.'),
             ...MasterForm::status(),
@@ -54,8 +56,14 @@ class StandardSizeResource extends MasterResource
         return MasterTable::configure($table, [
             ViewColumn::make('preview')->label('Shape')->view('filament.columns.size-preview'),
             TextColumn::make('label')->searchable(),
-            MasterTable::mm('width_mm', 'Width'),
-            MasterTable::mm('height_mm', 'Height'),
+            MasterTable::cm('width_mm', 'Width'),
+            MasterTable::cm('height_mm', 'Height'),
+            TextColumn::make('inches')
+                ->label('Inches')
+                ->state(fn (StandardSize $record) => round($record->width_mm / 25.4, 1).' × '.round($record->height_mm / 25.4, 1).' in')
+                ->color('gray')
+                ->alignEnd()
+                ->toggleable(),
         ]);
     }
 

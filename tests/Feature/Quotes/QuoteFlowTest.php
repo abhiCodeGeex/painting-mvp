@@ -20,11 +20,13 @@ use App\Models\User;
 use App\Notifications\QuoteSent;
 use App\Settings\CompanySettings;
 use App\Settings\PricingSettings;
+use App\Support\Money;
 use Database\Seeders\DemoCatalogSeeder;
 use Database\Seeders\MasterDataSeeder;
 use Database\Seeders\StateSeeder;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use Spatie\LaravelPdf\Facades\Pdf;
 
@@ -205,7 +207,7 @@ test('sending a quote by email, WhatsApp and portal message', function () {
         ->and($message->getMedia('attachments'))->toHaveCount(1);
 
     // Locked once sent.
-    expect(fn () => $builder->send($quote, $this->admin, ['email']))->toThrow(Illuminate\Validation\ValidationException::class);
+    expect(fn () => $builder->send($quote, $this->admin, ['email']))->toThrow(ValidationException::class);
 });
 
 test('the customer sees the quote and opens the PDF', function () {
@@ -276,7 +278,7 @@ test('the quote PDF template shows lines, GST split and the grand total', functi
         ->toContain($quote->lines->first()->title)
         ->toContain('CGST 9%')
         ->toContain('SGST 9%')
-        ->toContain(App\Support\Money::format($quote->grand_total))
+        ->toContain(Money::format($quote->grand_total))
         ->not->toContain('IGST');
 
 });

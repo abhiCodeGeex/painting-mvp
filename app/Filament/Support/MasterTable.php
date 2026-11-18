@@ -69,6 +69,19 @@ class MasterTable
             ->sortable();
     }
 
+    /**
+     * Millimetre value shown in centimetres ("29.7 cm").
+     */
+    public static function cm(string $name, ?string $label = null): TextColumn
+    {
+        return TextColumn::make($name)
+            ->label($label)
+            ->formatStateUsing(fn ($state): string => rtrim(rtrim(number_format(((int) $state) / 10, 1, '.', ''), '0'), '.').' cm')
+            ->alignEnd()
+            ->sortable()
+            ->placeholder('—');
+    }
+
     public static function mm(string $name, ?string $label = null): TextColumn
     {
         return TextColumn::make($name)

@@ -34,7 +34,7 @@ class CatalogOptions
     public static function forEditor(): array
     {
         return [
-            'artworks' => Artwork::active()->ordered()->with(['media', 'artist', 'categories', 'sizePrices', 'mediums', 'substrates'])->get()
+            'artworks' => Artwork::active()->ordered()->with(['media', 'artist', 'categories.parent', 'sizePrices', 'mediums', 'substrates'])->get()
                 ->map(fn (Artwork $a) => [
                     'id' => $a->id,
                     'code' => $a->code,
@@ -43,7 +43,10 @@ class CatalogOptions
                     'type' => $a->type->value,
                     'type_label' => $a->type->getLabel(),
                     'description' => $a->description,
-                    'categories' => $a->categories->pluck('name')->all(),
+                    // Full names ("Canvas Wall Art › Set of 3 Designs") plus each parent, so filtering by a top-level category finds its subcategories' artworks.
+                    'categories' => $a->categories
+                        ->flatMap(fn (Category $c) => array_filter([$c->parent?->name, $c->fullName()]))
+                        ->unique()->values()->all(),
                     'thumb' => ($m = $a->getFirstMedia('main')) ? MediaUrl::for($m, 'thumb') : null,
                     'image' => ($m = $a->getFirstMedia('main')) ? MediaUrl::for($m, 'preview') : null,
                     'native_width_mm' => $a->native_width_mm,
@@ -61,7 +64,10 @@ class CatalogOptions
                     'substrate_ids' => $a->substrates->pluck('id')->all(),
                     'is_featured' => $a->is_featured,
                 ])->values()->all(),
-            'categories' => Category::active()->ordered()->pluck('name')->all(),
+            'categories' => Category::active()->whereNull('parent_id')->ordered()
+                ->with(['children' => fn ($q) => $q->active()->ordered()])->get()
+                ->flatMap(fn (Category $c) => [$c->name, ...$c->children->map(fn (Category $child) => "{$c->name} › {$child->name}")])
+                ->values()->all(),
             'mediums' => Medium::active()->ordered()->with('substrates')->get()->map(fn (Medium $m) => [
                 'id' => $m->id,
                 'name' => $m->name,
@@ -112,9 +118,11 @@ class CatalogOptions
                 'max_area_m2' => $g->max_area_m2 !== null ? (float) $g->max_area_m2 : null,
                 'description' => $g->description,
             ])->values()->all(),
-            'finishings' => Finishing::active()->ordered()->with('substrates')->get()->map(fn (Finishing $f) => [
+            'finishings' => Finishing::active()->ordered()->with(['substrates', 'media'])->get()->map(fn (Finishing $f) => [
                 'id' => $f->id,
                 'name' => $f->name,
+                'description' => $f->description,
+                'picture' => $f->pictureUrl(),
                 'is_default' => $f->is_default,
                 'substrate_ids' => $f->substrates->pluck('id')->all(),
             ])->values()->all(),

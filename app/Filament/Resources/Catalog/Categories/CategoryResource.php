@@ -3,28 +3,30 @@
 namespace App\Filament\Resources\Catalog\Categories;
 
 use App\Filament\Resources\Catalog\Categories\Pages\ManageCategories;
+use App\Filament\Resources\Catalog\Categories\Pages\ManageCategorySubcategories;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MasterResource;
 use App\Filament\Support\MasterTable;
 use App\Models\Category;
 use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
-use Filament\Forms\Components\Select;
+use Filament\Actions\DeleteAction;
+use Filament\Actions\EditAction;
+use Filament\Actions\RestoreAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\IconPosition;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use UnitEnum;
 
 /**
- * Artwork categories / styles (abstract, landscape, botanical…), one level of nesting.
+ * Top-level artwork categories (Canvas Wall Art, Hand Painted…). Subcategories have their own list.
  */
 class CategoryResource extends MasterResource
 {
@@ -34,11 +36,22 @@ class CategoryResource extends MasterResource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_CATALOG;
 
-    protected static ?string $navigationLabel = 'Categories & styles';
+    protected static ?string $navigationLabel = 'Categories';
 
-    protected static ?int $navigationSort = 30;
+    protected static ?string $modelLabel = 'category';
+
+    protected static ?string $pluralModelLabel = 'categories';
+
+    protected static ?int $navigationSort = 10;
+
+    protected static ?string $slug = 'catalog/categories';
 
     protected static ?string $recordTitleAttribute = 'name';
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->whereNull('parent_id');
+    }
 
     public static function form(Schema $schema): Schema
     {
@@ -57,18 +70,9 @@ class CategoryResource extends MasterResource
                 ->maxLength(255)
                 ->alphaDash()
                 ->unique(ignoreRecord: true),
-            Select::make('parent_id')
-                ->label('Parent category')
-                ->relationship(
-                    name: 'parent',
-                    titleAttribute: 'name',
-                    modifyQueryUsing: fn (Builder $query, ?Model $record) => $query
-                        ->whereNull('parent_id')
-                        ->when($record, fn (Builder $q) => $q->whereKeyNot($record->getKey())),
-                )
-                ->searchable()
-                ->preload()
-                ->placeholder('None (top level)')
+            TextInput::make('material')
+                ->maxLength(255)
+                ->placeholder('e.g. Canvas fabric, Manual painting, Various materials')
                 ->columnSpanFull(),
             Textarea::make('description')->rows(2)->columnSpanFull(),
             ...MasterForm::status(),
@@ -78,11 +82,24 @@ class CategoryResource extends MasterResource
     public static function table(Table $table): Table
     {
         return MasterTable::configure($table, [
-            TextColumn::make('name')->searchable(),
-            TextColumn::make('parent.name')->label('Parent')->placeholder('—'),
-            TextColumn::make('artworks_count')->counts('artworks')->label('Artworks')->alignEnd(),
-        ], [
-            SelectFilter::make('parent_id')->label('Parent')->relationship('parent', 'name'),
+            TextColumn::make('name')->searchable()->weight('bold'),
+            TextColumn::make('material')->placeholder('—'),
+            TextColumn::make('description')->limit(45)->placeholder('—')->toggleable(),
+            // Click-through to this category's own subcategory list.
+            TextColumn::make('children_count')
+                ->counts('children')
+                ->label('Subcategories')
+                ->formatStateUsing(fn (int $state) => $state.' '.Str::plural('subcategory', $state))
+                ->icon(Heroicon::OutlinedChevronRight)
+                ->iconPosition(IconPosition::After)
+                ->color('primary')
+                ->weight('medium')
+                ->url(fn (Category $record) => self::getUrl('subcategories', ['record' => $record])),
+        ])->recordActions([
+            EditAction::make(),
+            DeleteAction::make()->label('Archive')->modalHeading('Archive this category?')
+                ->modalDescription('It and its subcategories will be hidden from new enquiries but stay on existing records. You can restore it later.'),
+            RestoreAction::make(),
         ]);
     }
 
@@ -90,6 +107,7 @@ class CategoryResource extends MasterResource
     {
         return [
             'index' => ManageCategories::route('/'),
+            'subcategories' => ManageCategorySubcategories::route('/{record}/subcategories'),
         ];
     }
 }

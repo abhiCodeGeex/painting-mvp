@@ -11,7 +11,11 @@ use App\Enums\FrameProfile;
 use App\Enums\GlazingMaterial;
 use App\Enums\MediumKind;
 use App\Enums\PricingType;
+use App\Enums\PrintingMethod;
 use App\Enums\ReflectionLevel;
+use App\Enums\SubstrateFinish;
+use App\Enums\SubstrateMaterial;
+use App\Enums\SubstrateUnit;
 use App\Models\ComplexityLevel;
 use App\Models\EnquirySource;
 use App\Models\ExtraCharge;
@@ -25,6 +29,7 @@ use App\Models\RejectionReason;
 use App\Models\StandardSize;
 use App\Models\Substrate;
 use App\Models\Tax;
+use App\Support\CatalogAssets;
 use Illuminate\Database\Seeder;
 
 /**
@@ -115,12 +120,31 @@ class MasterDataSeeder extends Seeder
             'canvasRoll' => ['Canvas roll (unstretched)', 0, [], false, false, true, 70000, 0],
             'paper' => ['Fine-art paper 310 gsm', 0, [], true, true, true, 60000, 0],
             'panel' => ['Wood panel 18 mm', 18, [EdgeStyle::SolidColour], true, false, false, 150000, 0],
+            'glass' => ['Glass print 4 mm', 4, [], false, false, false, 180000, 0],
+        ];
+
+        // Specifications: material, thickness (mm), GSM, finish, printing methods, unit.
+        $specs = [
+            'canvas38' => [SubstrateMaterial::Canvas, 0.5, 380, SubstrateFinish::Matte, [PrintingMethod::Inkjet, PrintingMethod::Uv], SubstrateUnit::SquareMetre],
+            'canvas20' => [SubstrateMaterial::Canvas, 0.5, 380, SubstrateFinish::Matte, [PrintingMethod::Inkjet, PrintingMethod::Uv], SubstrateUnit::SquareMetre],
+            'canvasRoll' => [SubstrateMaterial::Canvas, 0.5, 380, SubstrateFinish::Matte, [PrintingMethod::Inkjet, PrintingMethod::Uv], SubstrateUnit::Roll],
+            'paper' => [SubstrateMaterial::Paper, 0.5, 310, SubstrateFinish::Matte, [PrintingMethod::Inkjet], SubstrateUnit::Sheet],
+            'panel' => [SubstrateMaterial::Wood, 18, null, SubstrateFinish::Textured, [PrintingMethod::Uv], SubstrateUnit::Sheet],
+            'glass' => [SubstrateMaterial::Glass, 4, null, SubstrateFinish::Glossy, [PrintingMethod::Uv, PrintingMethod::Sublimation], SubstrateUnit::Sheet],
         ];
 
         $substrates = [];
         $i = 0;
         foreach ($rows as $key => [$name, $depth, $edges, $glazing, $mat, $frame, $m2, $perimeter]) {
+            [$material, $thickness, $gsm, $finish, $methods, $unit] = $specs[$key];
             $substrates[$key] = Substrate::firstOrCreate(['name' => $name], [
+                'material_type' => $material,
+                'thickness_mm' => $thickness,
+                'gsm' => $gsm,
+                'finish' => $finish,
+                'printing_methods' => array_map(fn (PrintingMethod $p) => $p->value, $methods),
+                'available_sizes' => ['12×18', '18×24', '24×36'],
+                'unit' => $unit,
                 'depth_mm' => $depth,
                 'edge_styles' => array_map(fn (EdgeStyle $e) => $e->value, $edges),
                 'allows_glazing' => $glazing,
@@ -217,6 +241,8 @@ class MasterDataSeeder extends Seeder
             if ($frame->wasRecentlyCreated && $floater) {
                 $frame->substrates()->sync([$s['canvas38']->id, $s['canvas20']->id]);
             }
+            // Rendered corner photo (made with the frame studio, /dev/frame-studio).
+            CatalogAssets::attach($frame, 'corner', CatalogAssets::path('frames', "{$code}.jpg"));
         }
     }
 
@@ -288,6 +314,9 @@ class MasterDataSeeder extends Seeder
             ]);
             if ($finishing->wasRecentlyCreated && $substrateIds) {
                 $finishing->substrates()->sync($substrateIds);
+            }
+            if ($picture = Finishing::PICTURES[$name] ?? null) {
+                CatalogAssets::attach($finishing, 'picture', CatalogAssets::path('finishings', $picture));
             }
         }
     }

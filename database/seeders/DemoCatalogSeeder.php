@@ -19,10 +19,16 @@ class DemoCatalogSeeder extends Seeder
 {
     public function run(): void
     {
-        $categories = [];
-        foreach (['Abstract', 'Landscape', 'Botanical', 'Figurative', 'Photography', 'Indian contemporary'] as $i => $name) {
-            $categories[$name] = Category::firstOrCreate(['name' => $name], ['sort_order' => $i]);
-        }
+        // Artworks go into subcategories (created by CategorySeeder).
+        $this->call(CategorySeeder::class);
+        $categories = [
+            'Abstract' => Category::where('slug', 'canvas-abstract')->firstOrFail(),
+            'Landscape' => Category::where('slug', 'canvas-scenery')->firstOrFail(),
+            'Botanical' => Category::where('slug', 'canvas-floral')->firstOrFail(),
+            'Photography' => Category::where('slug', 'canvas-modern')->firstOrFail(),
+            'Indian contemporary' => Category::where('slug', 'canvas-ethnic')->firstOrFail(),
+            'Watercolour' => Category::where('slug', 'hand-painting-modern')->firstOrFail(),
+        ];
 
         $asha = Artist::firstOrCreate(['name' => 'Asha Menon'], ['bio' => 'Abstract painter working in layered acrylics.', 'country' => 'IN']);
         $luca = Artist::firstOrCreate(['name' => 'Luca Bianchi'], ['bio' => 'Landscape photographer.', 'country' => 'IT']);
@@ -86,7 +92,7 @@ class DemoCatalogSeeder extends Seeder
             'lead_time_days' => 3,
         ]);
         if ($original->wasRecentlyCreated) {
-            $original->categories()->sync([$categories['Botanical']->id]);
+            $original->categories()->sync([$categories['Watercolour']->id]);
             $original->sizePrices()->create(['width_mm' => 600, 'height_mm' => 600, 'price' => 4500000, 'sort_order' => 0]);
         }
 

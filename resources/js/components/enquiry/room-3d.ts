@@ -1,16 +1,38 @@
 import { Icon } from '@/ui/icon';
-import { afterNextRender, ChangeDetectionStrategy, Component, computed, effect, ElementRef, input, OnDestroy, signal, untracked, viewChild } from '@angular/core';
-import { Camera, Download, Eye, Lamp, Maximize2, Minimize2, Moon, Move, RotateCcw, Smartphone, Sofa, Sun, Sunrise, Sunset, X, ZoomIn, ZoomOut } from 'lucide';
+import {
+    afterNextRender,
+    ChangeDetectionStrategy,
+    Component,
+    computed,
+    effect,
+    ElementRef,
+    input,
+    OnDestroy,
+    signal,
+    untracked,
+    viewChild,
+} from '@angular/core';
+import {
+    Camera,
+    Download,
+    Eye,
+    Lamp,
+    Maximize2,
+    Minimize2,
+    Moon,
+    Move,
+    RotateCcw,
+    Smartphone,
+    Sofa,
+    Sun,
+    Sunrise,
+    Sunset,
+    X,
+    ZoomIn,
+    ZoomOut,
+} from 'lucide';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { VignetteShader } from 'three/examples/jsm/shaders/VignetteShader.js';
 import { ArView } from './ar-view';
 import type { WallPiece } from './preview-helpers';
 import { ContactShadows } from './three/contact-shadows';
@@ -55,14 +77,75 @@ interface TimeLook {
 
 /** Daylight through the window per time of day: sun height, colour, strength and the room's overall brightness. */
 const TIMES: Record<TimeOfDay, TimeLook> = {
-    morning: { label: 'Morning', elevation: 16, azimuth: -25, sun: '#ffd8a6', sunIntensity: 3.4, fill: 0.5, env: 0.5, exposure: 1.0, sky: ['#9cc6ec', '#ffd9b0', '#fbe7cc'] },
-    noon: { label: 'Midday', elevation: 52, azimuth: -10, sun: '#fff7ea', sunIntensity: 3.0, fill: 0.6, env: 0.6, exposure: 1.0, sky: ['#5d9fe0', '#cfe6fa'] },
-    evening: { label: 'Evening', elevation: 8, azimuth: 20, sun: '#ff9550', sunIntensity: 2.8, fill: 0.38, env: 0.35, exposure: 1.05, sky: ['#3c4f86', '#ff9a62', '#f6b77e'] },
-    night: { label: 'Night', elevation: -10, azimuth: 0, sun: '#9fb4ff', sunIntensity: 0, fill: 0.12, env: 0.1, exposure: 1.15, sky: ['#060a18', '#1b2647'] },
+    morning: {
+        label: 'Morning',
+        elevation: 16,
+        azimuth: -25,
+        sun: '#ffd8a6',
+        sunIntensity: 3.4,
+        fill: 0.5,
+        env: 0.5,
+        exposure: 1.0,
+        sky: ['#9cc6ec', '#ffd9b0', '#fbe7cc'],
+    },
+    noon: {
+        label: 'Midday',
+        elevation: 52,
+        azimuth: -10,
+        sun: '#fff7ea',
+        sunIntensity: 3.0,
+        fill: 0.6,
+        env: 0.6,
+        exposure: 1.0,
+        sky: ['#5d9fe0', '#cfe6fa'],
+    },
+    evening: {
+        label: 'Evening',
+        elevation: 8,
+        azimuth: 20,
+        sun: '#ff9550',
+        sunIntensity: 2.8,
+        fill: 0.38,
+        env: 0.35,
+        exposure: 1.05,
+        sky: ['#3c4f86', '#ff9a62', '#f6b77e'],
+    },
+    night: {
+        label: 'Night',
+        elevation: -10,
+        azimuth: 0,
+        sun: '#9fb4ff',
+        sunIntensity: 0,
+        fill: 0.12,
+        env: 0.1,
+        exposure: 1.15,
+        sky: ['#060a18', '#1b2647'],
+    },
 };
 const TIME_ICONS = { morning: Sunrise, noon: Sun, evening: Sunset, night: Moon };
 
-/** Phones and small laptops get the lighter effects chain (no ambient occlusion / depth of field). */
+/** Most pixels a still frame may use: about one 4K frame (3840 × 2160). */
+const MAX_STILL_PIXELS = 3840 * 2160;
+/** Most pixels while the camera moves: keeps orbiting at a steady frame rate. */
+const MAX_MOTION_PIXELS = 1920 * 1080;
+/** Time without movement before the sharp still frame is drawn. */
+const STILL_DELAY_MS = 180;
+
+/**
+ * Render resolution (device-pixel multiplier).
+ * While moving: the screen's own density (max 2×) for smooth motion.
+ * At rest: one extra-sharp "still" frame, supersampled 2× above the screen (pixel-perfect edges,
+ * fine artwork detail), capped at ~4K pixels in total.
+ */
+function renderScale(width: number, height: number, lite: boolean, still: boolean): number {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const area = Math.max(1, width * height);
+    if (!still) return Math.max(1, Math.min(dpr, lite ? 1.5 : 2, Math.sqrt(MAX_MOTION_PIXELS / area)));
+    const wanted = lite ? Math.min(dpr * 1.5, 2) : Math.min(dpr * 2, 3);
+    return Math.max(1, Math.min(wanted, Math.sqrt(MAX_STILL_PIXELS / area)));
+}
+
+/** Phones and small laptops render fewer pixels and smaller shadow maps. */
 function liteDevice(): boolean {
     try {
         // Manual override for support / testing: localStorage['room-quality'] = 'high' | 'lite'.
@@ -136,7 +219,10 @@ function savedStyle(): RoomStyle {
                             [title]="t.label"
                             [attr.aria-label]="t.label"
                             [attr.aria-pressed]="timeOfDay() === t.value"
-                            [class]="'flex size-6 items-center justify-center rounded text-white transition ' + (timeOfDay() === t.value ? 'bg-amber-500/80' : 'hover:bg-white/15')"
+                            [class]="
+                                'flex size-6 items-center justify-center rounded text-white transition ' +
+                                (timeOfDay() === t.value ? 'bg-amber-500/80' : 'hover:bg-white/15')
+                            "
                             (click)="setTime(t.value)"
                         >
                             <svg [icon]="t.icon" class="size-3.5" />
@@ -175,7 +261,10 @@ function savedStyle(): RoomStyle {
                     (click)="showHint.set(false)"
                 >
                     <svg [icon]="CameraIcon" class="size-3.5 shrink-0" />
-                    <span>Drag: look around · Scroll/pinch: zoom · Right-drag: move · Drag {{ pieces().length > 1 ? 'an artwork' : 'the artwork' }} to move it</span>
+                    <span
+                        >Drag: look around · Scroll/pinch: zoom · Right-drag: move · Drag {{ pieces().length > 1 ? 'an artwork' : 'the artwork' }} to
+                        move it</span
+                    >
                     <svg [icon]="XIcon" class="size-3 shrink-0 opacity-70" />
                 </button>
             }
@@ -287,9 +376,14 @@ export class Room3D implements OnDestroy {
     /** Daylight coming in through the window. */
     private sun = new THREE.DirectionalLight('#ffffff', 3);
     private ceilingLamp = new THREE.PointLight('#ffd7a0', 0, 6, 1.6);
-    private composer!: EffectComposer;
-    private bokeh: BokehPass | null = null;
-    private gtao: GTAOPass | null = null;
+    private lite = liteDevice();
+    /** Shadows and contact shadows are only re-rendered when something in the scene changed. */
+    private sceneDirty = true;
+    /** Furniture volumes (padded) the camera may not enter. */
+    private obstacles: THREE.Box3[] = [];
+    private stillTimer: ReturnType<typeof setTimeout> | null = null;
+    private isStill = false;
+    private viewSize = { width: 1, height: 1 };
     private envBase = 0.55;
     private skies = new Map<TimeOfDay, THREE.Texture>();
     private cubeTarget = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
@@ -314,7 +408,9 @@ export class Room3D implements OnDestroy {
 
         // A different set or size of artworks starts from the default layout again.
         effect(() => {
-            this.dims().map((x) => `${x.key}:${x.d.outerW.toFixed(3)}x${x.d.outerH.toFixed(3)}`).join('|');
+            this.dims()
+                .map((x) => `${x.key}:${x.d.outerW.toFixed(3)}x${x.d.outerH.toFixed(3)}`)
+                .join('|');
             untracked(() => this.offsets.set({}));
         });
 
@@ -327,7 +423,7 @@ export class Room3D implements OnDestroy {
             if (!this.ready()) return;
             this.furniture();
             if (this.furnitureGroup) this.furnitureGroup.visible = this.showFurniture();
-            this.invalidate();
+            this.markSceneDirty();
         });
         effect(() => {
             if (!this.ready()) return;
@@ -345,6 +441,7 @@ export class Room3D implements OnDestroy {
             const layout = this.layout();
             for (const p of layout) this.pieceGroups.get(p.key)?.position.set(p.x, p.y, 0);
             this.buildLights(this.pictureLight(), layout);
+            this.markSceneDirty();
         });
     }
 
@@ -352,28 +449,52 @@ export class Room3D implements OnDestroy {
 
     private init(): void {
         const host = this.canvasHost().nativeElement;
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        // Rendered straight to the screen with hardware multisampling (MSAA): clean, stable edges and
+        // no post-processing noise. preserveDrawingBuffer keeps "Save image" working.
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+        // Layout size (clientWidth/Height), not getBoundingClientRect(): the latter includes CSS
+        // transforms such as the dialog's opening zoom, which left the canvas ~5% too small and stretched.
+        this.viewSize = { width: Math.max(1, host.clientWidth), height: Math.max(1, host.clientHeight) };
+        this.renderer.setPixelRatio(renderScale(this.viewSize.width, this.viewSize.height, this.lite, false));
+        this.renderer.setSize(this.viewSize.width, this.viewSize.height, false);
+        this.camera.aspect = this.viewSize.width / this.viewSize.height;
+        this.camera.updateProjectionMatrix();
         this.renderer.shadowMap.enabled = true;
         // three r187 replaced PCFSoftShadowMap with a softer PCFShadowMap.
         this.renderer.shadowMap.type = THREE.PCFShadowMap;
-        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        // Shadow maps are redrawn only when the scene changes (not on every camera move).
+        this.renderer.shadowMap.autoUpdate = false;
+        // Khronos "PBR Neutral": made for product imagery, keeps the artwork's real colours
+        // (ACES desaturated and darkened them).
+        this.renderer.toneMapping = THREE.NeutralToneMapping;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        this.renderer.domElement.style.display = 'block';
+        // The canvas always fills its box exactly; the drawing buffer follows the box size.
+        Object.assign(this.renderer.domElement.style, { display: 'block', width: '100%', height: '100%' });
         host.appendChild(this.renderer.domElement);
 
         this.scene.environment = buildEnvironment(this.renderer);
         this.camera.position.set(0, EYE, 3);
 
         this.sun.castShadow = true;
-        this.sun.shadow.mapSize.set(2048, 2048);
-        this.sun.shadow.bias = -0.0004;
-        this.sun.shadow.normalBias = 0.02;
-        Object.assign(this.sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 20 });
+        this.sun.shadow.mapSize.set(this.lite ? 1024 : 2048, this.lite ? 1024 : 2048);
+        this.sun.shadow.bias = -0.0005;
+        this.sun.shadow.normalBias = 0.03;
+        this.sun.shadow.radius = 3;
+        // Tight shadow frustum around the room = sharper shadows from the same map size.
+        Object.assign(this.sun.shadow.camera, { left: -3.5, right: 3.5, top: 3.5, bottom: -3.5, near: 0.5, far: 14 });
         this.sun.shadow.camera.updateProjectionMatrix();
         this.ceilingLamp.position.set(0, 2.4, ROOM_DEPTH / 2);
-        this.scene.add(this.ambient, this.hemi, this.sun, this.sun.target, this.ceilingLamp, this.lightsGroup, this.piecesGroup, this.guidesGroup, this.cubeCamera);
-        this.setupComposer();
+        this.scene.add(
+            this.ambient,
+            this.hemi,
+            this.sun,
+            this.sun.target,
+            this.ceilingLamp,
+            this.lightsGroup,
+            this.piecesGroup,
+            this.guidesGroup,
+            this.cubeCamera,
+        );
 
         this.dragPlane.visible = false;
         this.scene.add(this.dragPlane);
@@ -382,6 +503,7 @@ export class Room3D implements OnDestroy {
         this.furnitureGroup = buildSofa();
         this.furnitureGroup.visible = this.showFurniture();
         this.scene.add(this.furnitureGroup);
+        this.obstacles = [new THREE.Box3().setFromObject(this.furnitureGroup).expandByScalar(0.22)];
 
         // Stay in front of the wall and above the floor.
         const controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -404,6 +526,12 @@ export class Room3D implements OnDestroy {
             this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, -wallW / 2 + 0.15, wallW / 2 - 0.15);
             this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z, 0.15, ROOM_DEPTH - 0.05);
             this.camera.position.y = THREE.MathUtils.clamp(this.camera.position.y, 0.15, wallH - 0.05);
+            // ...and never inside the furniture: step out in front of it.
+            if (this.furnitureGroup?.visible) {
+                for (const box of this.obstacles) {
+                    if (box.containsPoint(this.camera.position)) this.camera.position.z = box.max.z + 0.01;
+                }
+            }
             this.invalidate();
         });
         this.controls = controls;
@@ -430,52 +558,57 @@ export class Room3D implements OnDestroy {
             this.frameId = requestAnimationFrame(loop);
             const moving = this.stepIntro(now);
             // update() returns true while the camera is still moving (damping); render only then.
-            if (this.controls.update() || this.needsRender || moving) {
+            const cameraMoving = this.controls.update() || moving;
+            if (cameraMoving || this.needsRender) {
                 this.needsRender = false;
+                // Moving: normal resolution for a steady frame rate; the sharp still frame follows.
+                this.setStill(false);
                 this.renderFrame();
+                this.scheduleStill();
             }
         };
         this.frameId = requestAnimationFrame(loop);
     }
 
+    /** Something visible changed (camera, colour, light…): draw a new frame. */
     private invalidate(): void {
         this.needsRender = true;
     }
 
-    // ---- picture quality: ambient occlusion, depth of field, glow, vignette ----
-
-    private setupComposer(): void {
-        const { width, height } = this.canvasHost().nativeElement.getBoundingClientRect();
-        const w = Math.max(1, width);
-        const h = Math.max(1, height);
-        this.composer = new EffectComposer(this.renderer);
-        this.composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.composer.setSize(w, h);
-        this.composer.addPass(new RenderPass(this.scene, this.camera));
-        if (!liteDevice()) {
-            // Soft shadows in corners, under and behind furniture and frames.
-            this.gtao = new GTAOPass(this.scene, this.camera, w, h);
-            this.gtao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 2, thickness: 1, scale: 1 });
-            this.gtao.blendIntensity = 0.9;
-            this.composer.addPass(this.gtao);
-            // A touch of camera depth of field, focused on what the camera looks at.
-            this.bokeh = new BokehPass(this.scene, this.camera, { focus: 3, aperture: 0.00008, maxblur: 0.004 });
-            this.composer.addPass(this.bokeh);
-        }
-        this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.12, 0.4, 0.98));
-        const vignette = new ShaderPass(VignetteShader);
-        vignette.uniforms['offset'].value = 1.0;
-        vignette.uniforms['darkness'].value = 1.05;
-        this.composer.addPass(vignette);
-        this.composer.addPass(new OutputPass());
+    /** The scene's contents changed: shadows need redrawing too. */
+    private markSceneDirty(): void {
+        this.sceneDirty = true;
+        this.invalidate();
     }
 
+    private setStill(still: boolean): void {
+        if (still === this.isStill) return;
+        this.isStill = still;
+        this.renderer.setPixelRatio(renderScale(this.viewSize.width, this.viewSize.height, this.lite, still));
+        this.renderer.setSize(this.viewSize.width, this.viewSize.height, false);
+    }
+
+    /** Once the view has been at rest for a moment, draw one supersampled, pixel-perfect frame. */
+    private scheduleStill(): void {
+        if (this.stillTimer) clearTimeout(this.stillTimer);
+        this.stillTimer = setTimeout(() => {
+            this.stillTimer = null;
+            if (this.destroyed || this.dragging || this.intro) return;
+            this.setStill(true);
+            this.renderFrame();
+        }, STILL_DELAY_MS);
+    }
+
+    // ---- rendering ----
+
     private renderFrame(): void {
-        this.shadows?.update(this.renderer, this.scene);
-        if (this.bokeh) {
-            (this.bokeh.uniforms as Record<string, THREE.IUniform>)['focus'].value = this.camera.position.distanceTo(this.controls.target);
+        if (this.sceneDirty) {
+            // Shadows depend on the scene, not on the camera: redraw them only after a change.
+            this.sceneDirty = false;
+            this.renderer.shadowMap.needsUpdate = true;
+            this.shadows?.update(this.renderer, this.scene);
         }
-        this.composer.render();
+        this.renderer.render(this.scene, this.camera);
     }
 
     // ---- time of day ----
@@ -494,7 +627,11 @@ export class Room3D implements OnDestroy {
         const target = new THREE.Vector3(-0.4, 0.4, 1.2);
         const elevation = THREE.MathUtils.degToRad(Math.max(4, t.elevation));
         const azimuth = THREE.MathUtils.degToRad(t.azimuth);
-        const dir = new THREE.Vector3(Math.cos(elevation) * Math.cos(azimuth), Math.sin(elevation), Math.cos(elevation) * Math.sin(azimuth) + 0.25).normalize();
+        const dir = new THREE.Vector3(
+            Math.cos(elevation) * Math.cos(azimuth),
+            Math.sin(elevation),
+            Math.cos(elevation) * Math.sin(azimuth) + 0.25,
+        ).normalize();
         this.sun.position.copy(new THREE.Vector3(wallW / 2, WINDOW.sill + WINDOW.height / 2, WINDOW.z).add(dir.multiplyScalar(6)));
         this.sun.target.position.copy(target);
         this.sun.target.updateMatrixWorld();
@@ -522,13 +659,14 @@ export class Room3D implements OnDestroy {
             }
         });
         this.queueReflections();
-        this.invalidate();
+        this.markSceneDirty();
     }
 
     // ---- glass reflections ----
 
     /** Re-renders what the glass reflects (debounced; only when the scene changes). */
     private queueReflections(): void {
+        this.sceneDirty = true;
         if (this.reflectionTimer) clearTimeout(this.reflectionTimer);
         this.reflectionTimer = setTimeout(() => this.updateReflections(), 150);
     }
@@ -643,6 +781,7 @@ export class Room3D implements OnDestroy {
             this.furnitureGroup.visible = this.showFurniture();
             this.scene.add(this.furnitureGroup);
             this.furniture.set(furniture);
+            this.obstacles = furniture.group.children.map((piece) => new THREE.Box3().setFromObject(piece).expandByScalar(0.22));
             this.queueReflections();
         } catch (error) {
             console.warn(`3D room: "${style}" furniture could not be loaded, using the simple room.`, error);
@@ -659,7 +798,14 @@ export class Room3D implements OnDestroy {
             this.scene.remove(this.roomGroup);
             disposeTree(this.roomGroup);
         }
-        this.roomGroup = buildRoom(wallW, wallH, colour, this.floorTexture, this.floor() ?? undefined, this.skies.get(untracked(() => this.timeOfDay())));
+        this.roomGroup = buildRoom(
+            wallW,
+            wallH,
+            colour,
+            this.floorTexture,
+            this.floor() ?? undefined,
+            this.skies.get(untracked(() => this.timeOfDay())),
+        );
         this.scene.add(this.roomGroup);
 
         if (this.shadows) {
@@ -708,6 +854,8 @@ export class Room3D implements OnDestroy {
         const loaded = this.textures.get(url);
         if (loaded) return coverTexture(loaded, picW, picH);
         new THREE.TextureLoader().load(url, (texture) => {
+            // Sharp at grazing angles and up close.
+            texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
             this.textures.set(url, texture);
             this.textureVersion.update((v) => v + 1);
         });
@@ -866,10 +1014,13 @@ export class Room3D implements OnDestroy {
     private listenResize(): void {
         const host = this.canvasHost().nativeElement;
         const observer = new ResizeObserver(() => {
-            const { width, height } = host.getBoundingClientRect();
+            const width = host.clientWidth;
+            const height = host.clientHeight;
             if (!width || !height) return;
-            this.renderer.setSize(width, height);
-            this.composer?.setSize(width, height);
+            this.viewSize = { width, height };
+            this.isStill = false;
+            this.renderer.setPixelRatio(renderScale(width, height, this.lite, false));
+            this.renderer.setSize(width, height, false);
             this.camera.aspect = width / height;
             this.camera.updateProjectionMatrix();
             this.invalidate();
@@ -890,9 +1041,24 @@ export class Room3D implements OnDestroy {
     resetView(): void {
         this.intro = null;
         if (this.controls && !this.dragging) this.controls.enabled = true;
-        // Stand near the back of the room so wall, floor and furniture are in view, at eye height.
-        const distance = Math.min(ROOM_DEPTH - 0.15, Math.max(3.4, this.wallW() * 1.05));
-        this.place(distance, new THREE.Vector3(0, Math.min(1.2, this.wallH() / 2), 0), EYE);
+        // Frame the artwork(s) so they read clearly — about 40% of the view height — with the
+        // furniture below for scale. Big pieces push the camera back; small ones bring it closer.
+        const layout = this.layout();
+        const fov = THREE.MathUtils.degToRad(this.camera.fov);
+        const aspect = Math.max(0.5, this.camera.aspect || 1);
+        let centre = new THREE.Vector3(0, Math.min(1.2, this.wallH() / 2), 0);
+        let distance = Math.min(ROOM_DEPTH - 0.15, Math.max(3.4, this.wallW() * 1.05));
+        if (layout.length) {
+            const minX = Math.min(...layout.map((l) => l.x - l.d.outerW / 2));
+            const maxX = Math.max(...layout.map((l) => l.x + l.d.outerW / 2));
+            const minY = Math.min(...layout.map((l) => l.y - l.d.outerH / 2));
+            const maxY = Math.max(...layout.map((l) => l.y + l.d.outerH / 2));
+            const viewH = Math.max((maxY - minY) / 0.4, (maxX - minX) / (0.6 * aspect), 1.5);
+            distance = THREE.MathUtils.clamp(viewH / (2 * Math.tan(fov / 2)), 1.5, ROOM_DEPTH - 0.15);
+            // Look slightly below the art so the top of the furniture stays in the picture.
+            centre = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2 - 0.12 * viewH, 0);
+        }
+        this.place(distance, centre, Math.min(EYE, centre.y + 0.25));
     }
 
     closeUp(): void {
@@ -916,11 +1082,18 @@ export class Room3D implements OnDestroy {
         this.invalidate();
     }
 
+    /** Saves a 4K picture (3840 px wide) of the current view, whatever the size on screen. */
     saveImage(): void {
+        const { width, height } = this.viewSize;
+        this.renderer.setPixelRatio(3840 / Math.max(1, width));
+        this.renderer.setSize(width, height, false);
         this.renderFrame();
         const link = document.createElement('a');
-        link.download = 'artwork-preview.png';
+        link.download = 'artwork-preview-4k.png';
         link.href = this.renderer.domElement.toDataURL('image/png');
+        this.isStill = false;
+        this.setStill(true);
+        this.renderFrame();
         link.click();
     }
 
@@ -956,7 +1129,7 @@ export class Room3D implements OnDestroy {
         if (!this.renderer) return;
         this.controls.dispose();
         if (this.reflectionTimer) clearTimeout(this.reflectionTimer);
-        this.composer.dispose();
+        if (this.stillTimer) clearTimeout(this.stillTimer);
         this.cubeTarget.dispose();
         this.skies.forEach((t) => t.dispose());
         if (this.furnitureGroup && this.furniture()) this.scene.remove(this.furnitureGroup); // shared, cached models

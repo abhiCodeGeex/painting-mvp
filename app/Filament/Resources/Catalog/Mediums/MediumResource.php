@@ -28,9 +28,11 @@ class MediumResource extends MasterResource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSwatch;
 
-    protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_CATALOG;
+    protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_MATERIALS;
 
-    protected static ?int $navigationSort = 40;
+    protected static ?string $navigationLabel = 'Mediums';
+
+    protected static ?int $navigationSort = 20;
 
     // Laravel pluralises "medium" to "media"; keep readable labels and URL.
     protected static ?string $slug = 'catalog/mediums';

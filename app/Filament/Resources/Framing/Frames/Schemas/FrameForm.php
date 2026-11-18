@@ -7,6 +7,7 @@ use App\Enums\FrameMaterial;
 use App\Enums\FrameProfile;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MoneyInput;
+use App\Models\Frame;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\ColorPicker;
 use Filament\Forms\Components\Select;
@@ -99,10 +100,12 @@ class FrameForm
                             ->description('Updates as you change colour, width and finish.')
                             ->schema([
                                 View::make('filament.forms.frame-live-preview')
-                                    ->viewData(fn (Get $get): array => [
+                                    ->viewData(fn (Get $get, ?Frame $record): array => [
                                         'colour' => $get('colour_hex'),
                                         'width' => $get('profile_width_mm'),
                                         'finish' => $get('finish'),
+                                        'photo' => $record?->getFirstMediaUrl('corner') ?: null,
+                                        'name' => $record?->name,
                                     ]),
                             ]),
                         Section::make('Cost')

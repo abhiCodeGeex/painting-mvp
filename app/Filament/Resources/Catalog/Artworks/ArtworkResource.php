@@ -24,7 +24,9 @@ class ArtworkResource extends MasterResource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_CATALOG;
 
-    protected static ?int $navigationSort = 10;
+    protected static ?string $navigationLabel = 'Artworks';
+
+    protected static ?int $navigationSort = 40;
 
     protected static ?string $recordTitleAttribute = 'title';
 

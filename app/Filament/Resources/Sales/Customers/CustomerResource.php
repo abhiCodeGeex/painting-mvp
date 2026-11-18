@@ -43,7 +43,9 @@ class CustomerResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_SALES;
 
-    protected static ?int $navigationSort = 20;
+    protected static ?string $navigationLabel = 'Customers';
+
+    protected static ?int $navigationSort = 30;
 
     protected static ?string $recordTitleAttribute = 'company_name';
 

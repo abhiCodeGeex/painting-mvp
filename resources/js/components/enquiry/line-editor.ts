@@ -112,7 +112,13 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                             <select ui-select [value]="d().brief.style" (change)="setBrief('style', $any($event.target).value)">
                                                 <option value="">No preference</option>
                                                 @for (c of options().categories; track c) {
-                                                    <option [value]="c" [selected]="d().brief.style === c">{{ c }}</option>
+                                                    <option [value]="c" [selected]="d().brief.style === c">
+                                                        @if (c.includes(' › ')) {
+                                                            &nbsp;&nbsp;↳ {{ c.split(' › ')[1] }}
+                                                        } @else {
+                                                            {{ c }}
+                                                        }
+                                                    </option>
                                                 }
                                             </select>
                                         </div>
@@ -364,14 +370,34 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                 @if (finishings().length > 0) {
                                     <div class="grid gap-1.5">
                                         <label ui-label>Hanging & finishing</label>
-                                        <div class="space-y-1.5">
+                                        <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
                                             @for (f of finishings(); track f.id) {
-                                                <label class="flex items-center gap-2 text-sm">
-                                                    <ui-checkbox
-                                                        [checked]="d().finishing_ids.includes(f.id)"
-                                                        (checkedChange)="toggleFinishing(f.id, $event)"
-                                                    />
-                                                    {{ f.name }}
+                                                <label
+                                                    class="group relative cursor-pointer overflow-hidden rounded-lg border text-sm transition"
+                                                    [class]="
+                                                        d().finishing_ids.includes(f.id)
+                                                            ? 'border-primary ring-primary ring-2'
+                                                            : 'hover:border-foreground/30'
+                                                    "
+                                                    [title]="f.description ?? f.name"
+                                                >
+                                                    @if (f.picture) {
+                                                        <img
+                                                            [src]="f.picture"
+                                                            [alt]="f.name"
+                                                            loading="lazy"
+                                                            class="bg-muted aspect-[4/3] w-full object-cover"
+                                                        />
+                                                    } @else {
+                                                        <div class="bg-muted aspect-[4/3] w-full"></div>
+                                                    }
+                                                    <span class="flex items-center gap-2 p-2">
+                                                        <ui-checkbox
+                                                            [checked]="d().finishing_ids.includes(f.id)"
+                                                            (checkedChange)="toggleFinishing(f.id, $event)"
+                                                        />
+                                                        <span class="leading-tight">{{ f.name }}</span>
+                                                    </span>
                                                 </label>
                                             }
                                         </div>

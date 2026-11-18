@@ -34,6 +34,21 @@ class MasterForm
             ->suffix('mm');
     }
 
+    /**
+     * Length typed in centimetres (one decimal) but stored in whole millimetres.
+     */
+    public static function cm(string $name, ?string $label = null): TextInput
+    {
+        return TextInput::make($name)
+            ->label($label)
+            ->numeric()
+            ->minValue(0)
+            ->step(0.1)
+            ->suffix('cm')
+            ->formatStateUsing(fn ($state) => $state === null || $state === '' ? null : rtrim(rtrim(number_format(((int) $state) / 10, 1, '.', ''), '0'), '.'))
+            ->dehydrateStateUsing(fn ($state) => $state === null || $state === '' ? null : (int) round(((float) $state) * 10));
+    }
+
     public static function percent(string $name, ?string $label = null): TextInput
     {
         return TextInput::make($name)
