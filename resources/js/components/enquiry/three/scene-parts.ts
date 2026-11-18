@@ -36,8 +36,17 @@ export function rectPath(cx: number, cy: number, w: number, h: number): THREE.Pa
     return p;
 }
 
-/** Back wall, side walls, oak floor, ceiling and skirting board. */
-export function buildRoom(wallW: number, wallH: number, wallColour: string, floorTexture: THREE.Texture): THREE.Group {
+/**
+ * Back wall, side walls, floor, ceiling and skirting board. The floor uses the real laminate
+ * texture set when it has loaded, otherwise the procedural oak planks.
+ */
+export function buildRoom(
+    wallW: number,
+    wallH: number,
+    wallColour: string,
+    floorTexture: THREE.Texture,
+    realFloor?: { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture; tile: number },
+): THREE.Group {
     const group = new THREE.Group();
     const wallMaterial = () => new THREE.MeshStandardMaterial({ color: wallColour, roughness: 0.95 });
 
@@ -54,8 +63,15 @@ export function buildRoom(wallW: number, wallH: number, wallColour: string, floo
         group.add(wall);
     }
 
-    floorTexture.repeat.set(wallW / 1.2, ROOM_DEPTH / 1.2);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(wallW, ROOM_DEPTH), new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.7 }));
+    let floorMaterial: THREE.MeshStandardMaterial;
+    if (realFloor) {
+        for (const t of [realFloor.map, realFloor.normalMap, realFloor.roughnessMap]) t.repeat.set(wallW / realFloor.tile, ROOM_DEPTH / realFloor.tile);
+        floorMaterial = new THREE.MeshStandardMaterial({ map: realFloor.map, normalMap: realFloor.normalMap, roughnessMap: realFloor.roughnessMap, roughness: 1 });
+    } else {
+        floorTexture.repeat.set(wallW / 1.2, ROOM_DEPTH / 1.2);
+        floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.7 });
+    }
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(wallW, ROOM_DEPTH), floorMaterial);
     floor.rotation.set(-Math.PI / 2, 0, 0);
     floor.position.set(0, 0, ROOM_DEPTH / 2);
     floor.receiveShadow = true;

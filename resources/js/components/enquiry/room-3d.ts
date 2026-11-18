@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { PreviewFrame, PreviewMat } from './preview-helpers';
 import { ContactShadows } from './three/contact-shadows';
+import { loadRoomAssets, type RoomAssets } from './three/room-assets';
 import {
     buildArtwork,
     buildEnvironment,
@@ -66,6 +67,12 @@ import {
                 }
             </div>
 
+            @if (assetsLoading()) {
+                <div class="absolute top-2 left-2 flex items-center gap-1.5 rounded bg-black/55 px-2 py-1 text-[11px] text-white">
+                    <span class="size-2 animate-pulse rounded-full bg-amber-400"></span> Loading furniture…
+                </div>
+            }
+
             @if (showHint()) {
                 <button
                     type="button"
@@ -105,6 +112,9 @@ export class Room3D implements OnDestroy {
     private dragging = false;
     private ready = signal(false);
     private textureVersion = signal(0);
+    /** Real furniture, floor and interior lighting (Poly Haven, CC0) once loaded; the simple room is shown until then. */
+    private assets = signal<RoomAssets | null>(null);
+    protected assetsLoading = signal(true);
 
     private container = viewChild.required<ElementRef<HTMLDivElement>>('container');
     private canvasHost = viewChild.required<ElementRef<HTMLDivElement>>('canvasHost');
@@ -120,7 +130,9 @@ export class Room3D implements OnDestroy {
         const frameW = frame ? M(frame.width_mm) : 0;
         return { picW, picH, matB, matBottom, frameW, outerW: picW + 2 * matB + 2 * frameW, outerH: picH + 2 * matB + matBottom + 2 * frameW };
     });
-    private wallW = computed(() => Math.max(M(this.wallWidthMm() || 0) || 3.6, this.dims().outerW + 1.2, SOFA.w + 1.2));
+    private wallW = computed(() =>
+        Math.max(M(this.wallWidthMm() || 0) || 3.6, this.dims().outerW + 1.2, (this.assets()?.furnitureWidth ?? SOFA.w) + (this.assets() ? 0.5 : 1.2)),
+    );
     private wallH = computed(() => Math.max(M(this.wallHeightMm() || 0) || 2.7, this.dims().outerH + SOFA.h + 1.0));
     // Default hanging: centre at ~1.5 m, at least 20 cm above the sofa back.
     private art = computed(() => {
@@ -140,7 +152,7 @@ export class Room3D implements OnDestroy {
             active: this.pictureLight(),
             run: () => this.pictureLight.update((v) => !v),
         },
-        { label: this.showSofa() ? 'Hide sofa' : 'Show sofa', icon: Sofa, active: this.showSofa(), run: () => this.showSofa.update((v) => !v) },
+        { label: this.showSofa() ? 'Hide furniture' : 'Show furniture', icon: Sofa, active: this.showSofa(), run: () => this.showSofa.update((v) => !v) },
         { label: 'Centre the artwork', icon: Move, active: false, run: () => this.offset.set(null) },
         { label: 'Save image', icon: Download, active: false, run: () => this.saveImage() },
         {
@@ -187,10 +199,12 @@ export class Room3D implements OnDestroy {
 
         effect(() => {
             if (!this.ready()) return;
+            this.assets();
             this.buildRoom(this.wallW(), this.wallH(), this.wallColour());
         });
         effect(() => {
             if (!this.ready()) return;
+            this.assets();
             if (this.sofaGroup) this.sofaGroup.visible = this.showSofa();
             this.invalidate();
         });
@@ -279,6 +293,8 @@ export class Room3D implements OnDestroy {
         this.buildRoom(this.wallW(), this.wallH(), this.wallColour());
         this.resetView();
 
+        void this.loadAssets();
+
         const loop = () => {
             this.frameId = requestAnimationFrame(loop);
             // update() returns true while the camera is moving (damping); render only then.
@@ -300,7 +316,7 @@ export class Room3D implements OnDestroy {
             this.scene.remove(this.roomGroup);
             disposeTree(this.roomGroup);
         }
-        this.roomGroup = buildRoom(wallW, wallH, colour, this.floorTexture);
+        this.roomGroup = buildRoom(wallW, wallH, colour, this.floorTexture, this.assets()?.floor);
         this.scene.add(this.roomGroup);
 
         if (this.shadows) {
@@ -315,6 +331,34 @@ export class Room3D implements OnDestroy {
         this.dragPlane.geometry = new THREE.PlaneGeometry(wallW * 3, wallH * 3);
         this.dragPlane.position.set(0, wallH / 2, 0.05);
         this.invalidate();
+    }
+
+    /** Swap the simple sofa for the real furniture, and the studio lights for the interior HDRI. */
+    private async loadAssets(): Promise<void> {
+        try {
+            const assets = await loadRoomAssets(this.renderer);
+            if (this.destroyed) {
+                assets.environment.dispose();
+                return;
+            }
+            if (this.sofaGroup) {
+                this.scene.remove(this.sofaGroup);
+                disposeTree(this.sofaGroup);
+            }
+            this.sofaGroup = assets.furniture;
+            this.sofaGroup.visible = this.showSofa();
+            this.scene.add(this.sofaGroup);
+
+            this.scene.environment?.dispose();
+            this.scene.environment = assets.environment;
+            this.scene.environmentIntensity = 0.55;
+            this.assets.set(assets); // rebuilds the room with the real floor
+        } catch (error) {
+            console.warn('3D room: furniture could not be loaded, using the simple room.', error);
+        } finally {
+            this.assetsLoading.set(false);
+            this.invalidate();
+        }
     }
 
     private buildArtwork(): void {
@@ -483,7 +527,10 @@ export class Room3D implements OnDestroy {
         else void el.requestFullscreen?.();
     }
 
+    private destroyed = false;
+
     ngOnDestroy(): void {
+        this.destroyed = true;
         cancelAnimationFrame(this.frameId);
         this.cleanup.forEach((fn) => fn());
         if (!this.renderer) return;
