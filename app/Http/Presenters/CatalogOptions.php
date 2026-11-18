@@ -91,6 +91,7 @@ class CatalogOptions
                 'material' => $f->material->getLabel(),
                 'corner' => ($m = $f->getFirstMedia('corner')) ? MediaUrl::for($m, 'thumb') : null,
                 'is_floater' => $f->is_floater,
+                'profile' => $f->profile?->value ?? 'flat',
                 'substrate_ids' => $f->substrates->pluck('id')->all(),
                 'max_inner_width_mm' => $f->max_inner_width_mm,
                 'max_inner_height_mm' => $f->max_inner_height_mm,

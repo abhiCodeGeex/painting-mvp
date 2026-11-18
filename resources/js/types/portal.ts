@@ -159,6 +159,7 @@ export interface CatalogFrame {
     material: string;
     corner: string | null;
     is_floater: boolean;
+    profile: 'flat' | 'rounded' | 'scoop' | 'stepped' | 'ornate' | 'floater';
     substrate_ids: number[];
     max_inner_width_mm: number | null;
     max_inner_height_mm: number | null;

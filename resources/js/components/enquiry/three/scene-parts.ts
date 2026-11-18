@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { PreviewFrame, PreviewMat } from '../preview-helpers';
+import { buildMoulding } from './moulding';
 
 /* Builders for the 3D room, ported 1:1 from the React Three Fiber components. All sizes in metres. */
 
@@ -46,6 +47,7 @@ export function buildRoom(
     wallColour: string,
     floorTexture: THREE.Texture,
     realFloor?: { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture; tile: number },
+    sky?: THREE.Texture,
 ): THREE.Group {
     const group = new THREE.Group();
     const wallMaterial = () => new THREE.MeshStandardMaterial({ color: wallColour, roughness: 0.95 });
@@ -56,12 +58,16 @@ export function buildRoom(
     group.add(back);
 
     for (const side of [-1, 1]) {
-        const wall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_DEPTH, wallH), wallMaterial());
+        // The right wall has a window opening; it casts shadows so sunlight only enters through the window.
+        const geometry = side === 1 ? wallWithWindow(wallH) : new THREE.PlaneGeometry(ROOM_DEPTH, wallH);
+        const wall = new THREE.Mesh(geometry, wallMaterial());
         wall.position.set((side * wallW) / 2, wallH / 2, ROOM_DEPTH / 2);
         wall.rotation.set(0, (-side * Math.PI) / 2, 0);
         wall.receiveShadow = true;
+        wall.castShadow = side === 1;
         group.add(wall);
     }
+    group.add(buildWindow(wallW, sky));
 
     let floorMaterial: THREE.MeshStandardMaterial;
     if (realFloor) {
@@ -80,10 +86,68 @@ export function buildRoom(
     const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(wallW, ROOM_DEPTH), new THREE.MeshStandardMaterial({ color: '#f7f5f1', roughness: 1 }));
     ceiling.rotation.set(Math.PI / 2, 0, 0);
     ceiling.position.set(0, wallH, ROOM_DEPTH / 2);
+    ceiling.castShadow = true; // keeps the sun out except through the window
     group.add(ceiling);
 
     group.add(box(wallW, 0.09, 0.016, new THREE.MeshStandardMaterial({ color: '#f4f1ec', roughness: 0.6 }), [0, 0.045, 0.008], false, true));
     return group;
+}
+
+/** Window in the right-hand wall (metres): centre along the room depth, size and sill height. */
+export const WINDOW = { z: 2.35, width: 1.3, height: 1.45, sill: 0.85 };
+
+/** Right wall as a plane with the window cut out (wall-local coordinates, centred). */
+function wallWithWindow(wallH: number): THREE.ShapeGeometry {
+    const shape = rectShape(0, 0, ROOM_DEPTH, wallH);
+    // Wall-local x runs along +z in the room; y is height from the wall centre.
+    shape.holes.push(rectPath(WINDOW.z - ROOM_DEPTH / 2, WINDOW.sill + WINDOW.height / 2 - wallH / 2, WINDOW.width, WINDOW.height));
+    return new THREE.ShapeGeometry(shape);
+}
+
+/** Window frame, glazing bars, sill and the sky outside. */
+function buildWindow(wallW: number, sky?: THREE.Texture): THREE.Group {
+    const group = new THREE.Group();
+    const x = wallW / 2;
+    const { z, width: w, height: h, sill } = WINDOW;
+    const cy = sill + h / 2;
+    const white = new THREE.MeshStandardMaterial({ color: '#f4f2ee', roughness: 0.5 });
+    const t = 0.05; // frame thickness
+    const d = 0.12; // reveal depth
+    group.add(box(d, t, w + 2 * t, white, [x + d / 2 - 0.02, sill + h + t / 2, z]));
+    group.add(box(d, t, w + 2 * t, white, [x + d / 2 - 0.02, sill - t / 2, z]));
+    group.add(box(d, h, t, white, [x + d / 2 - 0.02, cy, z - w / 2 - t / 2]));
+    group.add(box(d, h, t, white, [x + d / 2 - 0.02, cy, z + w / 2 + t / 2]));
+    // glazing bars
+    group.add(box(0.03, 0.03, w, white, [x + 0.06, cy + h * 0.12, z], false, false));
+    group.add(box(0.03, h, 0.03, white, [x + 0.06, cy, z], false, false));
+    // sill inside the room
+    group.add(box(0.2, 0.03, w + 0.2, white, [x - 0.08, sill - 0.015, z]));
+
+    // Sky seen through the window (does not block the sun).
+    const skyPlane = new THREE.Mesh(new THREE.PlaneGeometry(6, 4), new THREE.MeshBasicMaterial({ map: sky ?? null, color: sky ? '#ffffff' : '#cfe3f5', toneMapped: false }));
+    skyPlane.position.set(x + 1.2, cy + 0.4, z);
+    skyPlane.rotation.y = -Math.PI / 2;
+    skyPlane.castShadow = false;
+    skyPlane.name = 'sky';
+    group.add(skyPlane);
+    return group;
+}
+
+/** Gradient sky for the window, per time of day. */
+export function skyTexture(top: string, bottom: string, glow?: string): THREE.Texture {
+    const c = document.createElement('canvas');
+    c.width = 16;
+    c.height = 256;
+    const g = c.getContext('2d')!;
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, top);
+    grad.addColorStop(glow ? 0.7 : 1, glow ?? bottom);
+    if (glow) grad.addColorStop(1, bottom);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 16, 256);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
 }
 
 /** A 2 m sofa for scale. */
@@ -140,9 +204,11 @@ export function buildArtwork(
     const { frame, mat, glazing, depthMm, edgeStyle, texture } = opts;
     const group = new THREE.Group();
     const frameDepth = frame ? M(Math.max(15, frame.depth_mm ?? 25)) : 0;
-    const canvasDepth = frame ? 0 : M(depthMm);
+    const floater = frame?.profile === 'floater';
+    // A floater holds a stretched canvas: its front sits just below the frame's front edge.
+    const canvasDepth = frame && !floater ? 0 : floater ? Math.min(M(depthMm) || 0.02, frameDepth - 0.006) : M(depthMm);
     // Front of the picture sits a little behind the front of the frame.
-    const faceZ = frame ? frameDepth - 0.012 : canvasDepth;
+    const faceZ = floater ? frameDepth - 0.004 : frame ? frameDepth - 0.012 : canvasDepth;
     // Picture centre is shifted up when the mat has a weighted bottom.
     const picY = d.matBottom / 2;
 
@@ -161,7 +227,7 @@ export function buildArtwork(
             new THREE.MeshStandardMaterial({ color: '#cfc8bd' }),
         ];
         const block = new THREE.Mesh(new THREE.BoxGeometry(d.picW, d.picH, canvasDepth), materials);
-        block.position.set(0, picY, canvasDepth / 2);
+        block.position.set(0, picY, faceZ - canvasDepth / 2);
         block.castShadow = block.receiveShadow = true;
         group.add(block);
     } else {
@@ -203,42 +269,28 @@ export function buildArtwork(
 
     // ---- frame ----
     if (frame) {
-        const params: Record<string, { roughness: number; metalness: number }> = {
-            matte: { roughness: 0.85, metalness: 0 },
-            satin: { roughness: 0.5, metalness: 0.05 },
-            gloss: { roughness: 0.18, metalness: 0.05 },
-            metallic: { roughness: 0.32, metalness: 0.85 },
-        };
-        const p = params[frame.finish] ?? params['matte'];
-        const material = new THREE.MeshStandardMaterial({ color: frame.colour, roughness: p.roughness, metalness: p.metalness });
-        const innerH = d.outerH - 2 * d.frameW;
-        const z = frameDepth / 2;
-        group.add(box(d.outerW, d.frameW, frameDepth, material, [0, d.outerH / 2 - d.frameW / 2, z]));
-        group.add(box(d.outerW, d.frameW, frameDepth, material, [0, -d.outerH / 2 + d.frameW / 2, z]));
-        group.add(box(d.frameW, innerH, frameDepth, material, [-d.outerW / 2 + d.frameW / 2, 0, z]));
-        group.add(box(d.frameW, innerH, frameDepth, material, [d.outerW / 2 - d.frameW / 2, 0, z]));
-        // inner lip giving a sense of the rebate
-        const lipShape = rectShape(0, 0, d.outerW - 2 * d.frameW + 0.008, innerH + 0.008);
-        lipShape.holes.push(rectPath(0, 0, d.outerW - 2 * d.frameW, innerH));
-        const lip = new THREE.Mesh(new THREE.ExtrudeGeometry(lipShape, { depth: 0.004, bevelEnabled: false }), material);
-        lip.position.set(0, 0, frameDepth - 0.006);
-        group.add(lip);
+        // The real moulding shape (flat, rounded, scoop, stepped, ornate or floater), mitred at the corners.
+        group.add(buildMoulding(d.outerW - 2 * d.frameW, d.outerH - 2 * d.frameW, d.frameW, frameDepth, frame));
 
         // glass
         if (glazing !== 'none') {
             const glass = new THREE.Mesh(
                 new THREE.PlaneGeometry(d.outerW - 2 * d.frameW, d.outerH - 2 * d.frameW),
+                // Real glass: the picture is seen through it (transmission) and the room is reflected
+                // in it, stronger at grazing angles (Fresnel). Museum / anti-reflective glass barely reflects.
                 new THREE.MeshPhysicalMaterial({
-                    transparent: true,
-                    opacity: glazing === 'low' ? 0.04 : 0.12,
-                    roughness: 0.02,
+                    transmission: 1,
+                    thickness: 0.002,
+                    ior: 1.5,
+                    roughness: 0,
                     metalness: 0,
-                    reflectivity: glazing === 'low' ? 0.1 : 0.9,
-                    envMapIntensity: glazing === 'low' ? 0.2 : 1.6,
+                    specularIntensity: glazing === 'low' ? 0.08 : 1,
+                    envMapIntensity: glazing === 'low' ? 0.12 : 1.4,
                     color: '#ffffff',
                 }),
             );
             glass.position.set(0, 0, faceZ + 0.004);
+            glass.name = 'glass'; // gets a live reflection of the room (see Room3D.updateReflections)
             group.add(glass);
         }
 

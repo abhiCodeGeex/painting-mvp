@@ -15,12 +15,13 @@ import {
 } from '@angular/core';
 import { LoaderCircle } from 'lucide';
 import { FramedArt } from './framed-art';
-import { isLight, outerSize, type GlazingLook, type PreviewFrame, type PreviewMat } from './preview-helpers';
+import { isLight, outerSize, type GlazingLook, type PreviewFrame, type PreviewMat, type WallPiece } from './preview-helpers';
 import { Room3D } from './room-3d';
+import { WallPhoto } from './wall-photo';
 
-type View = '3d' | 'room' | 'closeup';
+type View = '3d' | 'photo' | 'room' | 'closeup';
 
-const VIEW_LABELS: Record<View, string> = { '3d': '3D room', room: 'Flat wall', closeup: 'Close-up' };
+const VIEW_LABELS: Record<View, string> = { '3d': '3D room', photo: 'My wall', room: 'Flat wall', closeup: 'Close-up' };
 const SOFA_WIDTH = 2000;
 const SOFA_HEIGHT = 850;
 
@@ -39,7 +40,7 @@ function supportsWebGL(): boolean {
  */
 @Component({
     selector: 'wall-preview',
-    imports: [Icon, FramedArt, Room3D],
+    imports: [Icon, FramedArt, Room3D, WallPhoto],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <div [class]="rootClass()">
@@ -62,19 +63,7 @@ function supportsWebGL(): boolean {
 
             @if (view() === '3d') {
                 @defer (on immediate) {
-                    <room-3d
-                        [imageUrl]="imageUrl()"
-                        [widthMm]="w()"
-                        [heightMm]="h()"
-                        [frame]="frame()"
-                        [mat]="mat()"
-                        [depthMm]="depthMm()"
-                        [edgeStyle]="edgeStyle()"
-                        [glazing]="glazing()"
-                        [wallColour]="wallColour()"
-                        [wallWidthMm]="wallWidthMm()"
-                        [wallHeightMm]="wallHeightMm()"
-                    />
+                    <room-3d [pieces]="pieces()" [wallColour]="wallColour()" [wallWidthMm]="wallWidthMm()" [wallHeightMm]="wallHeightMm()" />
                 } @loading (minimum 100ms) {
                     <div class="text-muted-foreground flex h-[360px] items-center justify-center gap-2 rounded-lg border text-sm">
                         <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 3D room…
@@ -86,7 +75,21 @@ function supportsWebGL(): boolean {
                 }
             }
 
-            <div #box [class]="'w-full overflow-hidden rounded-lg border' + (view() === '3d' ? ' hidden' : '')">
+            @if (view() === 'photo') {
+                @defer (on immediate) {
+                    <wall-photo
+                        [imageUrl]="imageUrl()"
+                        [widthMm]="w()"
+                        [heightMm]="h()"
+                        [frame]="frame()"
+                        [mat]="mat()"
+                        [depthMm]="depthMm()"
+                        [unit]="unit()"
+                    />
+                }
+            }
+
+            <div #box [class]="'w-full overflow-hidden rounded-lg border' + (view() === '3d' || view() === 'photo' ? ' hidden' : '')">
                 @if (view() === 'room') {
                     <div class="relative" [style.height.px]="(wallH() + floorMm) * scale()" [style.background]="wallColour()">
                         <!-- floor -->
@@ -160,7 +163,7 @@ export class WallPreview {
     readonly userClass = input('', { alias: 'class' });
 
     private readonly webgl = supportsWebGL();
-    protected readonly views: View[] = this.webgl ? ['3d', 'room', 'closeup'] : ['room', 'closeup'];
+    protected readonly views: View[] = this.webgl ? ['3d', 'photo', 'room', 'closeup'] : ['photo', 'room', 'closeup'];
     protected readonly labels = VIEW_LABELS;
     protected view = signal<View>(this.webgl ? '3d' : 'room');
     protected readonly LoaderCircle = LoaderCircle;
@@ -174,6 +177,20 @@ export class WallPreview {
     protected rootClass = computed(() => cn('flex flex-col gap-2', this.userClass()));
     protected w = computed(() => Math.max(50, this.widthMm() || 0));
     protected h = computed(() => Math.max(50, this.heightMm() || 0));
+    /** The artwork as a one-piece list for the 3D room. */
+    protected pieces = computed<WallPiece[]>(() => [
+        {
+            id: 'piece',
+            imageUrl: this.imageUrl(),
+            widthMm: this.w(),
+            heightMm: this.h(),
+            frame: this.frame(),
+            mat: this.mat(),
+            depthMm: this.depthMm(),
+            edgeStyle: this.edgeStyle(),
+            glazing: this.glazing(),
+        },
+    ]);
     private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat()));
     protected finishedLabel = computed(() => sizeLabel(this.outer().width, this.outer().height, this.unit()));
 

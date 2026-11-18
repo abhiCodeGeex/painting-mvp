@@ -7,6 +7,7 @@ use App\Enums\ExtraChargeBasis;
 use App\Enums\ExtraChargeType;
 use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
+use App\Enums\FrameProfile;
 use App\Enums\GlazingMaterial;
 use App\Enums\MediumKind;
 use App\Enums\PricingType;
@@ -186,16 +187,16 @@ class MasterDataSeeder extends Seeder
     private function frames(array $s): void
     {
         $frames = [
-            ['FR-BLK-20', 'Black flat 20 mm', FrameMaterial::Wood, FrameFinish::Matte, '#1A1A1A', 20, 30, 38000, false],
-            ['FR-WHT-20', 'White flat 20 mm', FrameMaterial::Wood, FrameFinish::Satin, '#F4F4F2', 20, 30, 38000, false],
-            ['FR-OAK-25', 'Natural oak 25 mm', FrameMaterial::Wood, FrameFinish::Matte, '#C8A26B', 25, 35, 52000, false],
-            ['FR-WAL-30', 'Walnut 30 mm', FrameMaterial::Wood, FrameFinish::Satin, '#5C4033', 30, 40, 68000, false],
-            ['FR-GLD-40', 'Antique gold ornate 40 mm', FrameMaterial::Polymer, FrameFinish::Metallic, '#B8913A', 40, 35, 85000, false],
-            ['FR-ALU-15', 'Brushed aluminium 15 mm', FrameMaterial::Aluminium, FrameFinish::Metallic, '#B5B8BA', 15, 25, 42000, false],
-            ['FR-FLT-BLK', 'Black floater for canvas', FrameMaterial::Wood, FrameFinish::Matte, '#1A1A1A', 10, 45, 60000, true],
+            ['FR-BLK-20', 'Black flat 20 mm', FrameMaterial::Wood, FrameFinish::Matte, '#1A1A1A', 20, 30, 38000, false, FrameProfile::Flat],
+            ['FR-WHT-20', 'White flat 20 mm', FrameMaterial::Wood, FrameFinish::Satin, '#F4F4F2', 20, 30, 38000, false, FrameProfile::Flat],
+            ['FR-OAK-25', 'Natural oak 25 mm', FrameMaterial::Wood, FrameFinish::Matte, '#C8A26B', 25, 35, 52000, false, FrameProfile::Rounded],
+            ['FR-WAL-30', 'Walnut 30 mm', FrameMaterial::Wood, FrameFinish::Satin, '#5C4033', 30, 40, 68000, false, FrameProfile::Scoop],
+            ['FR-GLD-40', 'Antique gold ornate 40 mm', FrameMaterial::Polymer, FrameFinish::Metallic, '#B8913A', 40, 35, 85000, false, FrameProfile::Ornate],
+            ['FR-ALU-15', 'Brushed aluminium 15 mm', FrameMaterial::Aluminium, FrameFinish::Metallic, '#B5B8BA', 15, 25, 42000, false, FrameProfile::Stepped],
+            ['FR-FLT-BLK', 'Black floater for canvas', FrameMaterial::Wood, FrameFinish::Matte, '#1A1A1A', 10, 45, 60000, true, FrameProfile::Floater],
         ];
 
-        foreach ($frames as $i => [$code, $name, $material, $finish, $colour, $width, $depth, $price, $floater]) {
+        foreach ($frames as $i => [$code, $name, $material, $finish, $colour, $width, $depth, $price, $floater, $profile]) {
             $frame = Frame::firstOrCreate(['code' => $code], [
                 'name' => $name,
                 'material' => $material,
@@ -209,6 +210,7 @@ class MasterDataSeeder extends Seeder
                 'max_inner_width_mm' => 1500,
                 'max_inner_height_mm' => 2000,
                 'is_floater' => $floater,
+                'profile' => $profile,
                 'sort_order' => $i,
             ]);
 

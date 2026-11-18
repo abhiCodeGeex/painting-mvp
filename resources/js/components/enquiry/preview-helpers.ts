@@ -2,11 +2,17 @@ import type { CatalogOptions } from '@/types/portal';
 
 export type GlazingLook = 'none' | 'standard' | 'low';
 
+export type FrameProfileShape = 'flat' | 'rounded' | 'scoop' | 'stepped' | 'ornate' | 'floater';
+
 export interface PreviewFrame {
     colour: string;
     width_mm: number;
     depth_mm?: number;
     finish: string;
+    /** Moulding cross-section for the 3D preview. */
+    profile?: FrameProfileShape;
+    /** e.g. "Wood" — wooden mouldings get a subtle grain in 3D. */
+    material?: string;
 }
 
 export interface PreviewMat {
@@ -46,7 +52,16 @@ export function previewParts(
     const glazing = options.glazings.find((g) => g.id === ids.glazing_id) ?? null;
 
     return {
-        frame: frame ? { colour: frame.colour, width_mm: frame.width_mm, depth_mm: frame.depth_mm, finish: frame.finish } : null,
+        frame: frame
+            ? {
+                  colour: frame.colour,
+                  width_mm: frame.width_mm,
+                  depth_mm: frame.depth_mm,
+                  finish: frame.finish,
+                  profile: frame.profile ?? (frame.is_floater ? 'floater' : 'flat'),
+                  material: frame.material,
+              }
+            : null,
         mat: mat
             ? {
                   colour: mat.colour,
@@ -55,7 +70,8 @@ export function previewParts(
                   bottom_weight_mm: mat.bottom_weight_mm,
               }
             : null,
-        depthMm: frame ? 0 : (substrate?.depth_mm ?? 0),
+        // A floater shows the stretched canvas (with its depth) sitting inside the frame.
+        depthMm: frame && !frame.is_floater ? 0 : (substrate?.depth_mm ?? 0),
         glazing: !glazing || glazing.material === 'none' ? 'none' : glazing.reflection === 'low' ? 'low' : 'standard',
     };
 }
@@ -76,4 +92,18 @@ export function isLight(hex: string): boolean {
     const g = parseInt(c.substring(2, 4), 16);
     const b = parseInt(c.substring(4, 6), 16);
     return (r * 299 + g * 587 + b * 114) / 1000 > 140;
+}
+
+/** One framed artwork to hang in the 3D room (several pieces = a gallery wall). */
+export interface WallPiece {
+    id: string | number;
+    title?: string;
+    imageUrl: string | null;
+    widthMm: number;
+    heightMm: number;
+    frame: PreviewFrame | null;
+    mat: PreviewMat | null;
+    depthMm: number;
+    edgeStyle: string | null;
+    glazing: GlazingLook;
 }

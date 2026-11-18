@@ -1,4 +1,5 @@
 import { AddressDialog } from '@/components/address-dialog';
+import { GalleryWall } from '@/components/enquiry/gallery-wall';
 import { LineCard } from '@/components/enquiry/line-card';
 import { LineEditor } from '@/components/enquiry/line-editor';
 import { InertiaForm } from '@/inertia/form';
@@ -14,7 +15,7 @@ import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { InputError } from '@/ui/text';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
-import { ArrowLeft, ArrowRight, Check, Copy, LoaderCircle, Pencil, Plus, Send, Trash2 } from 'lucide';
+import { ArrowLeft, ArrowRight, Check, Copy, LayoutGrid, LoaderCircle, Pencil, Plus, Send, Trash2 } from 'lucide';
 
 interface Props {
     enquiry: EnquiryDetail;
@@ -238,7 +239,7 @@ export class ProjectStep {
 /* ---------------------------- the page ---------------------------- */
 
 @Component({
-    imports: [InertiaHead, AppLayout, UI, Icon, InputError, LineCard, LineEditor, ProjectStep, EstimateTotal],
+    imports: [InertiaHead, AppLayout, UI, Icon, InputError, LineCard, LineEditor, ProjectStep, EstimateTotal, GalleryWall],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <app-layout [breadcrumbs]="breadcrumbs()">
@@ -303,7 +304,14 @@ export class ProjectStep {
                                         Add every piece you need — each can be a catalog artwork, a new creation or your own artwork.
                                     </p>
                                 </div>
-                                <button ui-button type="button" (click)="openEditor(null)"><svg [icon]="Plus" class="size-4" /> Add artwork</button>
+                                <div class="flex flex-wrap gap-2">
+                                    @if (enquiry().lines.length > 1) {
+                                        <button ui-button variant="outline" type="button" (click)="galleryOpen.set(true)">
+                                            <svg [icon]="LayoutGrid" class="size-4" /> See all on one wall
+                                        </button>
+                                    }
+                                    <button ui-button type="button" (click)="openEditor(null)"><svg [icon]="Plus" class="size-4" /> Add artwork</button>
+                                </div>
                             </div>
 
                             @if (enquiry().lines.length === 0) {
@@ -348,6 +356,7 @@ export class ProjectStep {
                             </div>
 
                             <line-editor [(open)]="editorOpen" [enquiryId]="enquiry().id" [line]="editing()" [options]="props().options" />
+                            <gallery-wall [(open)]="galleryOpen" [lines]="enquiry().lines" [options]="props().options" />
                         </div>
                     }
                     @case (2) {
@@ -437,6 +446,8 @@ export default class EditEnquiry {
     protected readonly Trash2 = Trash2;
     protected readonly Check = Check;
     protected readonly Plus = Plus;
+    protected readonly LayoutGrid = LayoutGrid;
+    protected galleryOpen = signal(false);
     protected readonly Pencil = Pencil;
     protected readonly Copy = Copy;
     protected readonly ArrowLeft = ArrowLeft;

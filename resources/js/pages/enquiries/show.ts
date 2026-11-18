@@ -1,3 +1,4 @@
+import { GalleryWall } from '@/components/enquiry/gallery-wall';
 import { LineCard } from '@/components/enquiry/line-card';
 import { previewParts } from '@/components/enquiry/preview-helpers';
 import { WallPreview } from '@/components/enquiry/wall-preview';
@@ -14,7 +15,7 @@ import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { InputError, StatusBadge } from '@/ui/text';
 import { ChangeDetectionStrategy, Component, computed, inject, input, model, signal } from '@angular/core';
-import { Download, Eye, FileText, LoaderCircle, Paperclip, Send, X } from 'lucide';
+import { Download, Eye, FileText, LoaderCircle, Paperclip, Send, X, LayoutGrid } from 'lucide';
 
 interface Props {
     enquiry: EnquiryDetail;
@@ -299,7 +300,7 @@ export class CancelDialog {
 /* ---------------------------- the page ---------------------------- */
 
 @Component({
-    imports: [InertiaHead, AppLayout, UI, Icon, StatusBadge, LineCard, WallPreview, UiDialog, QuoteCard, Conversation, CancelDialog],
+    imports: [InertiaHead, AppLayout, UI, Icon, StatusBadge, LineCard, WallPreview, UiDialog, QuoteCard, Conversation, CancelDialog, GalleryWall],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <app-layout [breadcrumbs]="breadcrumbs()">
@@ -346,7 +347,14 @@ export class CancelDialog {
 
                 <div class="grid gap-6 lg:grid-cols-5">
                     <div class="min-w-0 space-y-3 lg:col-span-3">
-                        <h2 class="text-lg font-semibold">Artworks</h2>
+                        <div class="flex items-center justify-between gap-2">
+                            <h2 class="text-lg font-semibold">Artworks</h2>
+                            @if (enquiry().lines.length > 1) {
+                                <button ui-button size="sm" variant="outline" type="button" (click)="galleryOpen.set(true)">
+                                    <svg [icon]="LayoutGrid" class="size-3.5" /> See all on one wall
+                                </button>
+                            }
+                        </div>
                         @for (line of enquiry().lines; track line.id; let i = $index) {
                             <line-card [line]="line" [options]="props().options" [index]="i">
                                 <button ui-button size="sm" variant="outline" type="button" (click)="preview.set(line)">
@@ -397,6 +405,8 @@ export class CancelDialog {
                 }
             </ui-dialog>
 
+            <gallery-wall [(open)]="galleryOpen" [lines]="enquiry().lines" [options]="props().options" />
+
             <cancel-dialog [(open)]="cancelOpen" [enquiryId]="enquiry().id" />
         </app-layout>
     `,
@@ -407,6 +417,8 @@ export default class ShowEnquiry {
     protected preview = signal<EnquiryLine | null>(null);
     protected cancelOpen = signal(false);
     protected readonly Eye = Eye;
+    protected readonly LayoutGrid = LayoutGrid;
+    protected galleryOpen = signal(false);
     protected readonly dh = DIALOG_HEADER;
     protected readonly dt = DIALOG_TITLE;
     protected readonly dd = DIALOG_DESCRIPTION;

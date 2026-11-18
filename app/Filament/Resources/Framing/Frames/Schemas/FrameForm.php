@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Framing\Frames\Schemas;
 
 use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
+use App\Enums\FrameProfile;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MoneyInput;
 use Filament\Forms\Components\CheckboxList;
@@ -57,6 +58,13 @@ class FrameForm
                                 MasterForm::mm('profile_width_mm', 'Face width')->required()->minValue(5)->live(onBlur: true),
                                 MasterForm::mm('profile_depth_mm', 'Depth')->required()->minValue(5),
                                 MasterForm::mm('rebate_depth_mm', 'Rebate depth'),
+                                Select::make('profile')
+                                    ->label('Moulding shape (3D preview)')
+                                    ->options(FrameProfile::class)
+                                    ->default(FrameProfile::Flat)
+                                    ->required()
+                                    ->native(false)
+                                    ->columnSpanFull(),
                             ]),
 
                         Section::make('Size limits (inside the frame)')
@@ -111,7 +119,8 @@ class FrameForm
                                     ->image()
                                     ->maxSize(5120)
                                     ->helperText('Shown in the customer\'s frame picker.'),
-                                SpatieMediaLibraryFileUpload::make('profile')
+                                // Form key differs from the "profile" column (moulding shape); same media collection.
+                                SpatieMediaLibraryFileUpload::make('profile_image')
                                     ->label('Profile / cross-section')
                                     ->collection('profile')
                                     ->image()

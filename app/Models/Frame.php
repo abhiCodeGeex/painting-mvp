@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
+use App\Enums\FrameProfile;
 use App\Models\Concerns\IsMaster;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -26,6 +27,7 @@ class Frame extends Model implements HasMedia
         return [
             'finish' => FrameFinish::class,
             'material' => FrameMaterial::class,
+            'profile' => FrameProfile::class,
             'price_per_m' => 'integer',
             'waste_percent' => 'decimal:2',
             'is_floater' => 'boolean',
