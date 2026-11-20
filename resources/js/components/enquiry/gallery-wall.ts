@@ -1,9 +1,10 @@
 import type { CatalogOptions, EnquiryLine } from '@/types/portal';
 import { DIALOG_DESCRIPTION, DIALOG_HEADER, DIALOG_TITLE, UiDialog } from '@/ui/dialog';
 import { Icon } from '@/ui/icon';
-import { ChangeDetectionStrategy, Component, computed, input, model } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, model, signal } from '@angular/core';
 import { LoaderCircle } from 'lucide';
 import { previewParts, type WallPiece } from './preview-helpers';
+import { Room360 } from './room-360';
 import { Room3D } from './room-3d';
 
 /** The artwork itself (picture size) for a line, whatever size reference the customer used. */
@@ -26,12 +27,12 @@ export function lineToPiece(options: CatalogOptions, line: EnquiryLine): WallPie
 }
 
 /**
- * All artworks of an enquiry together on one wall: drag them around, with snapping
- * alignment guides, in any room style.
+ * All artworks of an enquiry together on one wall: in a photoreal 360° room, or in the 3D room
+ * where they can be dragged around with snapping alignment guides.
  */
 @Component({
     selector: 'gallery-wall',
-    imports: [UiDialog, Room3D, Icon],
+    imports: [UiDialog, Room360, Room3D, Icon],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <ui-dialog [(open)]="open" contentClass="sm:max-w-5xl">
@@ -39,15 +40,44 @@ export function lineToPiece(options: CatalogOptions, line: EnquiryLine): WallPie
                 <div [class]="h">
                     <h2 [class]="t">All artworks on one wall</h2>
                     <p [class]="d">
-                        {{ lines().length }} artworks to scale. Drag them to arrange your wall — they snap to each other's edges and centres. Colours and textures are indicative.
+                        @if (mode() === '360') {
+                            {{ lines().length }} artworks to scale in a photoreal room. Colours and textures are indicative.
+                        } @else {
+                            {{ lines().length }} artworks to scale. Drag them to arrange your wall — they snap to each other's edges and centres.
+                            Colours and textures are indicative.
+                        }
                     </p>
                 </div>
-                @defer (on immediate) {
-                    <room-3d [pieces]="pieces()" [wallColour]="wallColour()" height="h-[460px]" />
-                } @placeholder {
-                    <div class="text-muted-foreground flex h-[460px] items-center justify-center gap-2 rounded-lg border text-sm">
-                        <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 3D room…
-                    </div>
+                <div class="bg-muted inline-flex self-start rounded-md p-0.5 text-xs">
+                    @for (m of modes; track m.value) {
+                        <button
+                            type="button"
+                            [class]="
+                                'rounded px-2.5 py-1 font-medium transition ' +
+                                (mode() === m.value ? 'bg-background shadow-sm' : 'text-muted-foreground')
+                            "
+                            (click)="mode.set(m.value)"
+                        >
+                            {{ m.label }}
+                        </button>
+                    }
+                </div>
+                @if (mode() === '360') {
+                    @defer (on immediate) {
+                        <room-360 [pieces]="pieces()" [wallColour]="wallColour()" height="h-[460px]" />
+                    } @placeholder {
+                        <div class="text-muted-foreground flex h-[460px] items-center justify-center gap-2 rounded-lg border text-sm">
+                            <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 360° room…
+                        </div>
+                    }
+                } @else {
+                    @defer (on immediate) {
+                        <room-3d [pieces]="pieces()" [wallColour]="wallColour()" height="h-[460px]" />
+                    } @placeholder {
+                        <div class="text-muted-foreground flex h-[460px] items-center justify-center gap-2 rounded-lg border text-sm">
+                            <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 3D room…
+                        </div>
+                    }
                 }
             }
         </ui-dialog>
@@ -58,6 +88,11 @@ export class GalleryWall {
     readonly lines = input.required<EnquiryLine[]>();
     readonly options = input.required<CatalogOptions>();
 
+    protected readonly modes = [
+        { value: '360' as const, label: '360° room' },
+        { value: '3d' as const, label: 'Arrange in 3D' },
+    ];
+    protected mode = signal<'360' | '3d'>('360');
     protected pieces = computed(() => this.lines().map((line) => lineToPiece(this.options(), line)));
     /** The wall colour most lines asked for (falls back to warm white). */
     protected wallColour = computed(() => {

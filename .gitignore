@@ -29,3 +29,7 @@ yarn-error.log
 
 /storage/app/pdf-smoke-test.pdf
 /database/database.sqlite
+
+# Offline room renderer sources (downloaded by docker/render/fetch_assets.py)
+/docker/render/assets/
+/docker/render/out/

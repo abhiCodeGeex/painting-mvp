@@ -70,6 +70,14 @@ services:
   gotenberg:
     image: gotenberg/gotenberg:8
 
+  # Offline renderer for the 360° rooms: docker compose run --rm render --python docker/render/rooms.py -- <args>
+  render:
+    build: docker/render
+    image: paint-mvp-render
+    profiles: ["render"]
+    volumes:
+      - .:/work
+
 volumes:
   pgsql-data:
   redis-data:

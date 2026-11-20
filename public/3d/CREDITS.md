@@ -33,3 +33,26 @@ If any file is missing the room falls back to the simple built-in sofa and floor
 (the self-contained bundle from the npm package `@google/model-viewer`), licence in
 `vendor/model-viewer.LICENSE.txt` (Apache-2.0; file header BSD-3-Clause for bundled parts).
 It is loaded only when a customer opens "View on your wall (AR)".
+
+## 360° rooms (`rooms/`)
+
+Photoreal cube panoramas rendered offline with Blender 4.2 LTS (Cycles + OpenImageDenoise) by
+`docker/render/rooms.py`, from CC0 Poly Haven sources fetched by `docker/render/fetch_assets.py`:
+
+- Models: sofa_03, modern_coffee_table_01, side_table_01, potted_plant_01/02/04, mid_century_lounge_chair,
+  ceramic_vase_01/02/03, modern_ceiling_lamp_01, ClassicNightstand_01, metal_office_desk, modern_arm_chair_01,
+  desk_lamp_arm_01, dining_table, dining_chair_02, modern_wooden_cabinet, ClassicConsole_01, ArmChair_01,
+  coffee_table_round_01, brass_vase_01 (https://polyhaven.com/models)
+- Textures: wood_floor, herringbone_parquet, rectangular_parquet, marble_01, wool_boucle, rough_linen
+- HDRI (sky seen through the windows): green_point_park
+
+The bed, kitchen, shelving, books, pendant lights, cove ceiling, panelling, windows, curtains and rugs are
+modelled by the script. Rooms: living room, bedroom, kitchen, office, dining room, hotel lobby. Each room folder
+holds six faces (`f l r b u d`; ceiling and floor at 2/3 size), their painted-wall masks, 512 px versions for a fast first view, the light on the
+art wall and `meta.json`. Current renders: 1024 px faces, 8 samples + denoiser (about 6 minutes per room
+on 4 CPU cores). For sharper rooms render at 1536 px / 32 samples (about an hour per room):
+
+    docker compose --profile render build render
+    docker compose --profile render run --rm --entrypoint /opt/blender/4.2/python/bin/python3.11 \
+        -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt render docker/render/fetch_assets.py
+    docker compose --profile render run --rm render --python docker/render/rooms.py -- --room all --size 1536 --samples 32

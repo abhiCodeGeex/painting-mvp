@@ -16,12 +16,13 @@ import {
 import { LoaderCircle } from 'lucide';
 import { FramedArt } from './framed-art';
 import { isLight, outerSize, type GlazingLook, type PreviewFrame, type PreviewMat, type WallPiece } from './preview-helpers';
+import { Room360 } from './room-360';
 import { Room3D } from './room-3d';
 import { WallPhoto } from './wall-photo';
 
-type View = '3d' | 'photo' | 'room' | 'closeup';
+type View = '360' | '3d' | 'photo' | 'room' | 'closeup';
 
-const VIEW_LABELS: Record<View, string> = { '3d': '3D room', photo: 'My wall', room: 'Flat wall', closeup: 'Close-up' };
+const VIEW_LABELS: Record<View, string> = { '360': '360° room', '3d': '3D room', photo: 'My wall', room: 'Flat wall', closeup: 'Close-up' };
 const SOFA_WIDTH = 2000;
 const SOFA_HEIGHT = 850;
 
@@ -40,7 +41,7 @@ function supportsWebGL(): boolean {
  */
 @Component({
     selector: 'wall-preview',
-    imports: [Icon, FramedArt, Room3D, WallPhoto],
+    imports: [Icon, FramedArt, Room360, Room3D, WallPhoto],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <div [class]="rootClass()">
@@ -60,6 +61,16 @@ function supportsWebGL(): boolean {
                 </div>
                 <span class="text-muted-foreground">Finished size ≈ {{ finishedLabel() }}{{ quantity() > 1 ? ' · ×' + quantity() : '' }}</span>
             </div>
+
+            @if (view() === '360') {
+                @defer (on immediate) {
+                    <room-360 [pieces]="pieces()" [wallColour]="wallColour()" />
+                } @placeholder {
+                    <div class="text-muted-foreground flex h-[420px] items-center justify-center gap-2 rounded-lg border text-sm">
+                        <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 360° room…
+                    </div>
+                }
+            }
 
             @if (view() === '3d') {
                 @defer (on immediate) {
@@ -89,7 +100,10 @@ function supportsWebGL(): boolean {
                 }
             }
 
-            <div #box [class]="'w-full overflow-hidden rounded-lg border' + (view() === '3d' || view() === 'photo' ? ' hidden' : '')">
+            <div
+                #box
+                [class]="'w-full overflow-hidden rounded-lg border' + (view() === '360' || view() === '3d' || view() === 'photo' ? ' hidden' : '')"
+            >
                 @if (view() === 'room') {
                     <div class="relative" [style.height.px]="(wallH() + floorMm) * scale()" [style.background]="wallColour()">
                         <!-- floor -->
@@ -163,9 +177,9 @@ export class WallPreview {
     readonly userClass = input('', { alias: 'class' });
 
     private readonly webgl = supportsWebGL();
-    protected readonly views: View[] = this.webgl ? ['3d', 'photo', 'room', 'closeup'] : ['photo', 'room', 'closeup'];
+    protected readonly views: View[] = this.webgl ? ['360', '3d', 'photo', 'room', 'closeup'] : ['photo', 'room', 'closeup'];
     protected readonly labels = VIEW_LABELS;
-    protected view = signal<View>(this.webgl ? '3d' : 'room');
+    protected view = signal<View>(this.webgl ? '360' : 'room');
     protected readonly LoaderCircle = LoaderCircle;
     protected readonly floorMm = 250;
     protected readonly sofaWidth = SOFA_WIDTH;
