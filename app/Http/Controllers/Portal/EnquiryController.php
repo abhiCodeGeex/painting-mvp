@@ -15,6 +15,7 @@ use App\Models\Enquiry;
 use App\Models\EnquirySource;
 use App\Models\Message;
 use App\Models\Quote;
+use App\Models\RejectionReason;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -71,6 +72,8 @@ class EnquiryController extends PortalController
             'messages' => $enquiry->messages()->with('media', 'author')->get()->map(fn (Message $m) => EnquiryPresenter::message($m))->values(),
             'quotes' => $enquiry->quotes()->whereNotNull('sent_at')->with('lines', 'extras')->get()->map(fn (Quote $q) => EnquiryPresenter::quote($q))->values(),
             'options' => CatalogOptions::forEditor(),
+            'rejectionReasons' => RejectionReason::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')
+                ->get(['id', 'name', 'requires_comment'])->values(),
         ]);
     }
 

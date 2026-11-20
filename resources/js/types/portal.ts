@@ -98,6 +98,7 @@ export interface EnquirySummary {
 }
 
 export interface EnquiryDetail extends EnquirySummary {
+    customer_type: string | null;
     project_type: string | null;
     project_type_label: string | null;
     delivery_address_id: number | null;
@@ -275,11 +276,13 @@ export interface CustomerQuote {
         discount_amount: number;
         line_total: number;
         is_optional: boolean;
+        is_selected: boolean;
     }[];
     extras: { name: string; inclusion: string; inclusion_label: string; amount: number }[];
     items_total: number;
     extras_total: number;
     discount_amount: number;
+    discount_percent: number;
     taxable: number;
     intra_state: boolean;
     tax_rate: number;
@@ -288,4 +291,14 @@ export interface CustomerQuote {
     igst: number;
     grand_total: number;
     pdf_url: string;
+    can_respond: boolean;
+    is_expired: boolean;
+    responded_at: string | null;
+    response: { action: string; name?: string; role?: string; po_number?: string; comment?: string; reason?: string } | null;
+}
+
+export interface RejectionReasonOption {
+    id: number;
+    name: string;
+    requires_comment: boolean;
 }

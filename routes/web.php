@@ -39,6 +39,10 @@ Route::middleware(['auth', 'verified', 'customer'])->group(function () {
         Route::post('enquiries/{enquiry}/cancel', [EnquiryController::class, 'cancel'])->name('enquiries.cancel');
         Route::post('enquiries/{enquiry}/estimate', EstimateController::class)->middleware('throttle:120,1')->name('enquiries.estimate');
         Route::get('enquiries/{enquiry}/quotes/{quote}/pdf', [QuoteController::class, 'pdf'])->name('enquiries.quotes.pdf');
+        Route::post('enquiries/{enquiry}/quotes/{quote}/approve', [QuoteController::class, 'approve'])->name('enquiries.quotes.approve');
+        Route::post('enquiries/{enquiry}/quotes/{quote}/changes', [QuoteController::class, 'requestChanges'])->name('enquiries.quotes.changes');
+        Route::post('enquiries/{enquiry}/quotes/{quote}/reject', [QuoteController::class, 'reject'])->name('enquiries.quotes.reject');
+        Route::post('enquiries/{enquiry}/quotes/{quote}/requote', [QuoteController::class, 'requote'])->name('enquiries.quotes.requote');
 
         // Lines use POST for updates too: they carry file uploads (multipart).
         Route::post('enquiries/{enquiry}/lines', [EnquiryLineController::class, 'store'])->name('enquiries.lines.store');

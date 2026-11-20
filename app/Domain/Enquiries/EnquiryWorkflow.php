@@ -196,6 +196,25 @@ class EnquiryWorkflow
     }
 
     /**
+     * The customer answered a quote: approved, asked for changes, rejected or asked for a re-quote
+     * (called by QuoteResponder). Posts a system note and the customer's comment, notifies sales.
+     */
+    public function recordQuoteResponse(Enquiry $enquiry, User $by, EnquiryStatus $to, string $note, ?string $comment = null): ?Message
+    {
+        $message = DB::transaction(function () use ($enquiry, $by, $to, $note, $comment): ?Message {
+            $enquiry->last_customer_activity_at = now();
+            $this->transition($enquiry, $to, $by, $note);
+            $this->systemMessage($enquiry, $note, by: $by);
+
+            return filled($comment)
+                ? $this->createMessage($enquiry, $by, $comment, MessageKind::Message, [])
+                : null;
+        });
+
+        return $message;
+    }
+
+    /**
      * Assignee if there is one, otherwise every active admin.
      *
      * @return Collection<int, User>

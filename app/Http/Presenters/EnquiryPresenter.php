@@ -52,6 +52,7 @@ class EnquiryPresenter
 
         return [
             ...self::summary($enquiry),
+            'customer_type' => $enquiry->customer?->type?->value,
             'project_type' => $enquiry->project_type?->value,
             'project_type_label' => $enquiry->project_type?->getLabel(),
             'delivery_address_id' => $enquiry->delivery_address_id,
@@ -158,7 +159,7 @@ class EnquiryPresenter
             'status' => $quote->status->value,
             'status_label' => $quote->status->getLabel(),
             'status_color' => $quote->status->getColor(),
-            'is_current' => ! in_array($quote->status, [QuoteStatus::Superseded, QuoteStatus::Expired], true),
+            'is_current' => $quote->status !== QuoteStatus::Superseded,
             'issue_date' => $quote->issue_date?->toDateString(),
             'valid_until' => $quote->valid_until?->toDateString(),
             'lead_time' => $quote->lead_time,
@@ -173,6 +174,7 @@ class EnquiryPresenter
                 'discount_amount' => $l->discount_amount,
                 'line_total' => $l->line_total,
                 'is_optional' => $l->is_optional,
+                'is_selected' => $l->is_selected,
             ])->values()->all(),
             'extras' => $quote->extras->map(fn (QuoteExtra $e) => [
                 'name' => $e->name,
@@ -183,6 +185,7 @@ class EnquiryPresenter
             'items_total' => $quote->items_total,
             'extras_total' => $quote->extras_total,
             'discount_amount' => $quote->discount_amount,
+            'discount_percent' => (float) $quote->discount_percent,
             'taxable' => $quote->taxable,
             'intra_state' => $quote->intra_state,
             'tax_rate' => (float) $quote->tax_rate,
@@ -191,6 +194,12 @@ class EnquiryPresenter
             'igst' => $quote->igst,
             'grand_total' => $quote->grand_total,
             'pdf_url' => route('portal.enquiries.quotes.pdf', [$quote->enquiry_id, $quote->id]),
+            // Customer response (spec §9).
+            'can_respond' => $quote->awaitsResponse(),
+            'is_expired' => $quote->status === QuoteStatus::Expired
+                || ($quote->isPastValidity() && in_array($quote->status, [QuoteStatus::Sent, QuoteStatus::Viewed], true)),
+            'responded_at' => $quote->responded_at?->toIso8601String(),
+            'response' => $quote->response ? array_intersect_key($quote->response, array_flip(['action', 'name', 'role', 'po_number', 'comment', 'reason'])) : null,
         ];
     }
 

@@ -45,6 +45,8 @@ class Quote extends Model implements HasMedia
             'sent_via' => 'array',
             'sent_at' => 'datetime',
             'viewed_at' => 'datetime',
+            'responded_at' => 'datetime',
+            'response' => 'array',
             'discount_percent' => 'decimal:2',
             'tax_rate' => 'decimal:2',
             'items_total' => 'integer',
@@ -92,6 +94,27 @@ class Quote extends Model implements HasMedia
         return $this->belongsTo(User::class, 'prepared_by');
     }
 
+    /**
+     * @return BelongsTo<RejectionReason, $this>
+     */
+    public function rejectionReason(): BelongsTo
+    {
+        return $this->belongsTo(RejectionReason::class);
+    }
+
+    /** The customer can still approve / request changes / reject this version (spec §9). */
+    public function awaitsResponse(): bool
+    {
+        return in_array($this->status, [QuoteStatus::Sent, QuoteStatus::Viewed], true)
+            && $this->sent_at !== null
+            && ! $this->isPastValidity();
+    }
+
+    public function isPastValidity(): bool
+    {
+        return $this->valid_until !== null && $this->valid_until->endOfDay()->isPast();
+    }
+
     public function registerMediaCollections(): void
     {
         $this->addMediaCollection('pdf')->useDisk('local')->singleFile();
@@ -109,6 +132,6 @@ class Quote extends Model implements HasMedia
 
     public function getActivitylogOptions(): LogOptions
     {
-        return LogOptions::defaults()->logOnly(['status', 'grand_total', 'valid_until', 'sent_at'])->logOnlyDirty()->dontLogEmptyChanges();
+        return LogOptions::defaults()->logOnly(['status', 'grand_total', 'valid_until', 'sent_at', 'responded_at'])->logOnlyDirty()->dontLogEmptyChanges();
     }
 }

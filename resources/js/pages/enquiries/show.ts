@@ -1,6 +1,7 @@
 import { GalleryWall } from '@/components/enquiry/gallery-wall';
 import { LineCard } from '@/components/enquiry/line-card';
 import { previewParts } from '@/components/enquiry/preview-helpers';
+import { QuoteResponse } from '@/components/enquiry/quote-response';
 import { WallPreview } from '@/components/enquiry/wall-preview';
 import { InertiaForm } from '@/inertia/form';
 import { InertiaHead } from '@/inertia/head';
@@ -8,27 +9,28 @@ import { pageProps } from '@/inertia/page';
 import { InertiaRouter } from '@/inertia/router';
 import { AppLayout } from '@/layouts/app-layout';
 import { formatDate, formatDateTime, formatInr } from '@/lib/units';
-import type { CatalogOptions, CustomerQuote, EnquiryDetail, EnquiryLine, EnquiryMessage } from '@/types/portal';
+import type { CatalogOptions, CustomerQuote, EnquiryDetail, EnquiryLine, EnquiryMessage, RejectionReasonOption } from '@/types/portal';
 import { DIALOG_DESCRIPTION, DIALOG_HEADER, DIALOG_TITLE, UiDialog } from '@/ui/dialog';
 import { FormField } from '@/ui/field';
 import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { InputError, StatusBadge } from '@/ui/text';
 import { ChangeDetectionStrategy, Component, computed, inject, input, model, signal } from '@angular/core';
-import { Download, Eye, FileText, LoaderCircle, Paperclip, Send, X, LayoutGrid } from 'lucide';
+import { Download, Eye, FileText, LayoutGrid, LoaderCircle, Paperclip, Send, X } from 'lucide';
 
 interface Props {
     enquiry: EnquiryDetail;
     messages: EnquiryMessage[];
     options: CatalogOptions;
     quotes: CustomerQuote[];
+    rejectionReasons?: RejectionReasonOption[];
 }
 
 /* ---------------------------- quote card ---------------------------- */
 
 @Component({
     selector: 'quote-card',
-    imports: [Icon, UI],
+    imports: [Icon, UI, QuoteResponse],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <section id="quote" class="overflow-hidden rounded-xl border-2 border-emerald-300 dark:border-emerald-800">
@@ -36,7 +38,10 @@ interface Props {
                 <div class="flex min-w-0 items-center gap-3">
                     <svg [icon]="FileText" class="size-6 shrink-0 text-emerald-700 dark:text-emerald-300" />
                     <div class="min-w-0">
-                        <div class="font-semibold break-words">Your quotation {{ q().number }}</div>
+                        <div class="flex flex-wrap items-center gap-2 font-semibold break-words">
+                            Your quotation {{ q().number }}
+                            <span [class]="'rounded-full px-2 py-0.5 text-[11px] font-medium ' + badgeClass()">{{ q().status_label }}</span>
+                        </div>
                         <div class="text-muted-foreground text-xs">
                             Issued {{ date(q().issue_date) }} · valid until <strong>{{ date(q().valid_until) }}</strong>
                         </div>
@@ -117,6 +122,7 @@ interface Props {
                 @if (q().note_to_customer) {
                     <p class="bg-muted mt-4 rounded-lg p-3 text-sm whitespace-pre-line">{{ q().note_to_customer }}</p>
                 }
+                <quote-response [quote]="q()" [enquiryId]="enquiryId()" [reasons]="reasons()" [roleRequired]="roleRequired()" />
                 <p class="text-muted-foreground mt-3 text-xs">Questions about this quotation? Reply in the conversation below.</p>
             </div>
         </section>
@@ -124,6 +130,23 @@ interface Props {
 })
 export class QuoteCard {
     readonly q = input.required<CustomerQuote>({ alias: 'quote' });
+    readonly enquiryId = input.required<number>();
+    readonly reasons = input<RejectionReasonOption[]>([]);
+    readonly roleRequired = input(false);
+    protected badgeClass = computed(() => {
+        switch (this.q().status_color) {
+            case 'success':
+                return 'bg-emerald-600 text-white';
+            case 'warning':
+                return 'bg-amber-100 text-amber-900';
+            case 'danger':
+                return 'bg-red-100 text-red-800';
+            case 'info':
+                return 'bg-sky-100 text-sky-900';
+            default:
+                return 'bg-muted text-muted-foreground';
+        }
+    });
     protected readonly FileText = FileText;
     protected readonly Download = Download;
     protected inr = (paise: number) => formatInr(paise, true);
@@ -332,7 +355,12 @@ export class CancelDialog {
                 }
 
                 @for (q of currentQuotes(); track q.id) {
-                    <quote-card [quote]="q" />
+                    <quote-card
+                        [quote]="q"
+                        [enquiryId]="enquiry().id"
+                        [reasons]="props().rejectionReasons ?? []"
+                        [roleRequired]="enquiry().customer_type === 'company'"
+                    />
                 }
                 @if (olderQuotes().length > 0) {
                     <p class="text-muted-foreground text-xs">

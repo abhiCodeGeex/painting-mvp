@@ -152,6 +152,15 @@
     </tr>
 </table>
 
+@if($quote->status === \App\Enums\QuoteStatus::Approved && $quote->responded_at)
+    <div class="section box" style="border:2px solid #059669; color:#065f46">
+        <strong>APPROVED</strong> on {{ $quote->responded_at->timezone(config('app.timezone'))->format('d M Y, H:i') }}
+        by {{ $quote->response['name'] ?? '' }}@if(!empty($quote->response['role'])), {{ $quote->response['role'] }}@endif
+        @if(!empty($quote->response['po_number'])) · PO {{ $quote->response['po_number'] }}@endif
+        · Total {{ Money::format($quote->grand_total) }}
+    </div>
+@endif
+
 @if($quote->note_to_customer)
     <div class="section box">{!! nl2br(e($quote->note_to_customer)) !!}</div>
 @endif

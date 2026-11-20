@@ -69,9 +69,9 @@ enum EnquiryStatus: string implements HasColor, HasLabel
         return in_array($this, [self::Draft, self::Submitted, self::UnderReview, self::NeedsClarification], true);
     }
 
-    /** Statuses in which the customer may add messages. */
+    /** Statuses in which messages can be added (approved stays open to arrange delivery and payment). */
     public function isOpen(): bool
     {
-        return ! in_array($this, [self::Draft, self::Cancelled, self::Approved, self::Rejected, self::Expired], true);
+        return ! in_array($this, [self::Draft, self::Cancelled, self::Rejected, self::Expired], true);
     }
 }

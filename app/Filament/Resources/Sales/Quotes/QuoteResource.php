@@ -199,8 +199,36 @@ class QuoteResource extends Resource
                                 : 'Not sent yet'),
                         TextEntry::make('valid_until')->date('d M Y')->placeholder('Set when sent'),
                     ]),
+
+                Section::make('Customer response')
+                    ->visible(fn (?Quote $record) => $record?->responded_at !== null)
+                    ->schema([
+                        TextEntry::make('response_summary')->hiddenLabel()
+                            ->state(fn (?Quote $record) => self::responseSummary($record)),
+                        TextEntry::make('response_comment')->label('Comment')
+                            ->state(fn (?Quote $record) => $record?->response['comment'] ?? null)
+                            ->placeholder('—')
+                            ->extraAttributes(['class' => 'whitespace-pre-line']),
+                    ]),
             ]),
         ])->disabled(fn (?Quote $record) => $record && ! $record->status->isEditable());
+    }
+
+    private static function responseSummary(?Quote $quote): ?string
+    {
+        if (! $quote?->responded_at) {
+            return null;
+        }
+        $r = $quote->response ?? [];
+        $when = $quote->responded_at->format('d M Y, H:i');
+
+        return match ($r['action'] ?? null) {
+            'approved' => "Approved by {$r['name']}".(! empty($r['role']) ? ", {$r['role']}" : '')." on {$when}"
+                .(! empty($r['po_number']) ? " · PO {$r['po_number']}" : '').' · '.Money::format((int) ($r['grand_total'] ?? $quote->grand_total)),
+            'changes_requested' => "Changes requested on {$when}. Create a new version to answer.",
+            'rejected' => "Declined on {$when}: ".($r['reason'] ?? '—'),
+            default => null,
+        };
     }
 
     private static function isCustomCreation(?int $enquiryLineId): bool
