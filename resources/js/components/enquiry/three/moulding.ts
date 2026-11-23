@@ -19,32 +19,80 @@ function curve(n: number, f: (t: number) => Pt): Pt[] {
 
 const PROFILES: Record<FrameProfileShape, Profile> = {
     flat: [
-        [[0, 0], [0, 1]],
-        [[0, 1], [1, 1]],
-        [[1, 1], [1, 0]],
+        [
+            [0, 0],
+            [0, 1],
+        ],
+        [
+            [0, 1],
+            [1, 1],
+        ],
+        [
+            [1, 1],
+            [1, 0],
+        ],
     ],
     rounded: [
-        [[0, 0], [0, 0.55]],
+        [
+            [0, 0],
+            [0, 0.55],
+        ],
         curve(18, (t) => [0.5 - 0.5 * Math.cos(Math.PI * t), 0.55 + 0.45 * Math.sin(Math.PI * t)]),
-        [[1, 0.55], [1, 0]],
+        [
+            [1, 0.55],
+            [1, 0],
+        ],
     ],
     scoop: [
-        [[0, 0], [0, 0.6]],
+        [
+            [0, 0],
+            [0, 0.6],
+        ],
         curve(14, (t) => [0.85 * t, 0.6 + 0.4 * Math.pow(t, 2.2)]),
-        [[0.85, 1], [1, 1]],
-        [[1, 1], [1, 0]],
+        [
+            [0.85, 1],
+            [1, 1],
+        ],
+        [
+            [1, 1],
+            [1, 0],
+        ],
     ],
     stepped: [
-        [[0, 0], [0, 0.62]],
-        [[0, 0.62], [0.33, 0.62]],
-        [[0.33, 0.62], [0.33, 0.81]],
-        [[0.33, 0.81], [0.66, 0.81]],
-        [[0.66, 0.81], [0.66, 1]],
-        [[0.66, 1], [1, 1]],
-        [[1, 1], [1, 0]],
+        [
+            [0, 0],
+            [0, 0.62],
+        ],
+        [
+            [0, 0.62],
+            [0.33, 0.62],
+        ],
+        [
+            [0.33, 0.62],
+            [0.33, 0.81],
+        ],
+        [
+            [0.33, 0.81],
+            [0.66, 0.81],
+        ],
+        [
+            [0.66, 0.81],
+            [0.66, 1],
+        ],
+        [
+            [0.66, 1],
+            [1, 1],
+        ],
+        [
+            [1, 1],
+            [1, 0],
+        ],
     ],
     ornate: [
-        [[0, 0], [0, 0.55]],
+        [
+            [0, 0],
+            [0, 0.55],
+        ],
         // small bead next to the art
         curve(8, (t) => [0.07 - 0.07 * Math.cos(Math.PI * t), 0.55 + 0.09 * Math.sin(Math.PI * t)]),
         // cove
@@ -52,17 +100,41 @@ const PROFILES: Record<FrameProfileShape, Profile> = {
         // main carved torus
         curve(18, (t) => [0.3 + 0.55 * (0.5 - 0.5 * Math.cos(Math.PI * t)), 0.7 + 0.3 * Math.sin(Math.PI * t)]),
         // outer fillet
-        [[0.85, 0.7], [0.85, 0.8]],
-        [[0.85, 0.8], [1, 0.8]],
-        [[1, 0.8], [1, 0]],
+        [
+            [0.85, 0.7],
+            [0.85, 0.8],
+        ],
+        [
+            [0.85, 0.8],
+            [1, 0.8],
+        ],
+        [
+            [1, 0.8],
+            [1, 0],
+        ],
     ],
     // L-shaped tray: a dark shadow gap all around the canvas, then the outer lip.
     floater: [
-        [[0, 0], [0, 0.12]],
-        [[0, 0.12], [0.5, 0.12]],
-        [[0.5, 0.12], [0.5, 1]],
-        [[0.5, 1], [1, 1]],
-        [[1, 1], [1, 0]],
+        [
+            [0, 0],
+            [0, 0.12],
+        ],
+        [
+            [0, 0.12],
+            [0.5, 0.12],
+        ],
+        [
+            [0.5, 0.12],
+            [0.5, 1],
+        ],
+        [
+            [0.5, 1],
+            [1, 1],
+        ],
+        [
+            [1, 1],
+            [1, 0],
+        ],
     ],
 };
 
@@ -88,6 +160,11 @@ export function buildMoulding(innerW: number, innerH: number, faceW: number, dep
         ];
     };
 
+    // With a photo strip, the face is textured as seen from the front: u = along the side in
+    // face widths (the strip's height is one face width), v = d (0 = sight edge = bottom row of
+    // the strip, 1 = outer edge = top row). The sides go round clockwise, so every rail is the
+    // strip rotated (never mirrored) with its outer edge facing out.
+    const strip = !!frame.strip_url;
     let v = 0; // running length across the profile, for texture v
     for (const run of profile) {
         const runV: number[] = [];
@@ -108,7 +185,8 @@ export function buildMoulding(innerW: number, innerH: number, faceW: number, dep
                 const length = start.distanceTo(end);
                 // u runs along the side (per metre), centred so the pattern meets nicely at the mitres
                 positions.push(start.x, start.y, z * depth, end.x, end.y, z * depth);
-                uvs.push(-length / 2, runV[j], length / 2, runV[j]);
+                if (strip) uvs.push(-length / 2 / faceW, d, length / 2 / faceW, d);
+                else uvs.push(-length / 2, runV[j], length / 2, runV[j]);
             }
             for (let j = 0; j < run.length - 1; j++) {
                 const a = base + j * 2;
@@ -144,6 +222,11 @@ function mouldingMaterial(frame: PreviewFrame): THREE.MeshStandardMaterial {
         metalness: finish.metalness,
         side: THREE.DoubleSide,
     });
+    if (frame.strip_url) {
+        // Plain colour until the photo arrives (or if it fails to load).
+        applyStrip(material, frame.strip_url, finish);
+        return material;
+    }
     const wooden = (frame.material ?? '').toLowerCase().includes('wood') && frame.finish !== 'metallic';
     if (wooden) {
         material.map = grainTexture();
@@ -153,6 +236,76 @@ function mouldingMaterial(frame: PreviewFrame): THREE.MeshStandardMaterial {
         material.bumpScale = 1.2;
     }
     return material;
+}
+
+/* ------------------------------------------------------------------ photo strips */
+
+interface StripEntry {
+    texture: THREE.Texture | null;
+    waiting: (() => void)[];
+}
+
+const strips = new Map<string, StripEntry>();
+const stripListeners = new Set<() => void>();
+
+/**
+ * Called whenever a frame's photo strip finishes loading and has been put on its mouldings:
+ * views that render on demand should draw a new frame. Returns the unsubscribe function.
+ */
+export function onFrameStripLoaded(listener: () => void): () => void {
+    stripListeners.add(listener);
+    return () => stripListeners.delete(listener);
+}
+
+/** Loads (once per URL) the strip texture and puts it on the material when it is ready. */
+function applyStrip(material: THREE.MeshStandardMaterial, url: string, finish: { roughness: number; metalness: number }): void {
+    const apply = (texture: THREE.Texture) => {
+        material.map = texture;
+        material.color.set('#ffffff');
+        // The photo already shows the sheen of the finish: keep only a hint of real reflection.
+        material.roughness = Math.max(0.4, finish.roughness);
+        material.metalness = finish.metalness * 0.3;
+        material.needsUpdate = true;
+    };
+    let entry = strips.get(url);
+    if (entry?.texture) {
+        apply(entry.texture);
+        return;
+    }
+    if (entry) {
+        entry.waiting.push(() => apply(entry!.texture!));
+        return;
+    }
+    entry = { texture: null, waiting: [() => apply(entry!.texture!)] };
+    strips.set(url, entry);
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
+    loader.load(
+        url,
+        (texture) => {
+            const image = texture.image as { width: number; height: number };
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.wrapS = THREE.RepeatWrapping; // tiles along the rail
+            texture.wrapT = THREE.ClampToEdgeWrapping; // edge rows continue down the moulding's sides
+            texture.anisotropy = 16; // three.js clamps to the GPU's maximum
+            texture.generateMipmaps = true;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            // u counts face widths; one strip image is (width / height) face widths long. The
+            // half-tile offset centres a tile on the middle of every rail (as in the 2D preview).
+            texture.repeat.set(image.height / Math.max(1, image.width), 1);
+            texture.offset.set(0.5, 0);
+            texture.needsUpdate = true;
+            entry!.texture = texture;
+            entry!.waiting.splice(0).forEach((fn) => fn());
+            stripListeners.forEach((fn) => fn());
+        },
+        undefined,
+        () => {
+            // Keep the plain colour; allow a retry on the next build.
+            strips.delete(url);
+        },
+    );
 }
 
 let grain: THREE.Texture | null = null;

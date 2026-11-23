@@ -422,6 +422,8 @@ export class CancelDialog {
                     <wall-preview
                         [imageUrl]="p.preview_image"
                         [detailImageUrl]="p.detail_image ?? null"
+                        [fullImageUrl]="p.full_image ?? null"
+                        [title]="p.display_title"
                         [widthMm]="p.width_mm"
                         [heightMm]="p.height_mm"
                         [frame]="previewParts().frame"

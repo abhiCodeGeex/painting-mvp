@@ -50,6 +50,8 @@ class CatalogOptions
                     'thumb' => ($m = $a->getFirstMedia('main')) ? MediaUrl::for($m, 'thumb') : null,
                     'image' => ($m = $a->getFirstMedia('main')) ? MediaUrl::for($m, 'preview') : null,
                     'image_detail' => $m ? MediaUrl::for($m, 'detail') : null,
+                    // The original file, for pixel-level zoom in the full-page viewer.
+                    'image_full' => $m ? MediaUrl::for($m) : null,
                     'native_width_mm' => $a->native_width_mm,
                     'native_height_mm' => $a->native_height_mm,
                     'min_width_mm' => $a->min_width_mm,
@@ -97,6 +99,9 @@ class CatalogOptions
                 'finish' => $f->finish->value,
                 'material' => $f->material->getLabel(),
                 'corner' => ($m = $f->getFirstMedia('corner')) ? MediaUrl::for($m, 'thumb') : null,
+                // Moulding strip built from the admin's photo: tileable along X, top row = outer edge.
+                'strip_url' => $f->stripUrl(),
+                'strip_face_mm' => $f->stripUrl() ? $f->profile_width_mm : null,
                 'is_floater' => $f->is_floater,
                 'profile' => $f->profile?->value ?? 'flat',
                 'substrate_ids' => $f->substrates->pluck('id')->all(),

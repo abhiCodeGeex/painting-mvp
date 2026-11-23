@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { ArView } from './ar-view';
 import { WALL_COLOURS, type WallPiece } from './preview-helpers';
+import { onFrameStripLoaded } from './three/moulding';
 import { buildArtwork, coverTexture, disposeTree, gradientTexture, M } from './three/scene-parts';
 
 /**
@@ -408,6 +409,8 @@ export class Room360 implements OnDestroy {
             // The hint fades on its own after a few seconds (and on first interaction).
             const hintTimer = setTimeout(() => this.hint.set(false), 6000);
             this.cleanup.push(() => clearTimeout(hintTimer));
+            // A frame's photo strip arrives after the moulding is built: draw it in.
+            this.cleanup.push(onFrameStripLoaded(() => this.requestFrame()));
             this.init();
             void this.loadIndex();
         });

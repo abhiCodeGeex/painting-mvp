@@ -4,7 +4,8 @@ import type { CatalogArtwork, CatalogOptions, MediaFile, Option } from '@/types/
 import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, output, signal } from '@angular/core';
-import { Check, ImagePlus, Search, Upload, X } from 'lucide';
+import { Check, ImagePlus, Maximize2, Search, Upload, X } from 'lucide';
+import { ArtworkLightbox } from './artwork-lightbox';
 import type { LineForm } from './line-form';
 
 /* ------------------------------------------------------------------ */
@@ -142,7 +143,7 @@ export class FileGallery {
 
 @Component({
     selector: 'catalog-picker',
-    imports: [Icon, UI],
+    imports: [Icon, UI, ArtworkLightbox],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <div class="space-y-3">
@@ -175,31 +176,44 @@ export class FileGallery {
             }
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 @for (a of visible(); track a.id) {
-                    <button
-                        type="button"
-                        [class]="
-                            'group relative overflow-hidden rounded-lg border text-left transition ' +
-                            (selectedId() === a.id ? 'border-primary ring-primary ring-2' : 'hover:shadow-md')
-                        "
-                        (click)="selected.emit(a)"
-                    >
-                        <div class="bg-muted aspect-square w-full">
-                            @if (a.thumb) {
-                                <img [src]="a.thumb" [alt]="a.title" class="size-full object-cover" loading="lazy" />
-                            } @else {
-                                <div class="size-full" style="background: linear-gradient(135deg, #f6d365, #fda085, #a1c4fd)"></div>
+                    <div class="group relative">
+                        <button
+                            type="button"
+                            [class]="
+                                'relative w-full overflow-hidden rounded-lg border text-left transition ' +
+                                (selectedId() === a.id ? 'border-primary ring-primary ring-2' : 'hover:shadow-md')
+                            "
+                            (click)="selected.emit(a)"
+                        >
+                            <div class="bg-muted aspect-square w-full">
+                                @if (a.thumb) {
+                                    <img [src]="a.thumb" [alt]="a.title" class="size-full object-cover" loading="lazy" />
+                                } @else {
+                                    <div class="size-full" style="background: linear-gradient(135deg, #f6d365, #fda085, #a1c4fd)"></div>
+                                }
+                            </div>
+                            <div class="p-2">
+                                <div class="truncate text-sm font-medium">{{ a.title }}</div>
+                                <div class="text-muted-foreground truncate text-xs">{{ a.artist ?? 'Studio' }} · {{ a.type_label }}</div>
+                            </div>
+                            @if (selectedId() === a.id) {
+                                <span class="bg-primary text-primary-foreground absolute top-2 right-2 rounded-full p-1"
+                                    ><svg [icon]="Check" class="size-3"
+                                /></span>
                             }
-                        </div>
-                        <div class="p-2">
-                            <div class="truncate text-sm font-medium">{{ a.title }}</div>
-                            <div class="text-muted-foreground truncate text-xs">{{ a.artist ?? 'Studio' }} · {{ a.type_label }}</div>
-                        </div>
-                        @if (selectedId() === a.id) {
-                            <span class="bg-primary text-primary-foreground absolute top-2 right-2 rounded-full p-1"
-                                ><svg [icon]="Check" class="size-3"
-                            /></span>
+                        </button>
+                        @if (a.image) {
+                            <button
+                                type="button"
+                                class="absolute top-2 left-2 rounded-full bg-black/55 p-1.5 text-white opacity-90 shadow transition hover:bg-black/75 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+                                [title]="'View ' + a.title + ' full size'"
+                                [attr.aria-label]="'View ' + a.title + ' full size'"
+                                (click)="zoomed.set(a)"
+                            >
+                                <svg [icon]="Maximize2" class="size-3.5" />
+                            </button>
                         }
-                    </button>
+                    </div>
                 }
             </div>
             @if (list().length > visible().length) {
@@ -209,6 +223,17 @@ export class FileGallery {
                 </button>
             }
         </div>
+        @if (zoomed(); as z) {
+            <artwork-lightbox
+                [open]="true"
+                (openChange)="!$event && zoomed.set(null)"
+                [title]="z.title + (z.artist ? ' — ' + z.artist : '')"
+                [previewUrl]="z.image"
+                [fullUrl]="z.image_full || z.image_detail || z.image"
+                [widthMm]="z.native_width_mm || 600"
+                [heightMm]="z.native_height_mm || 800"
+            />
+        }
     `,
 })
 export class CatalogPicker {
@@ -219,6 +244,9 @@ export class CatalogPicker {
     protected category = signal('');
     protected readonly Search = Search;
     protected readonly Check = Check;
+    protected readonly Maximize2 = Maximize2;
+    /** The artwork shown full size (no frame yet: chosen later in the editor). */
+    protected zoomed = signal<CatalogArtwork | null>(null);
     /** The grid grows with "Show more" instead of scrolling inside the dialog. */
     protected readonly pageSize = 6;
     protected limit = signal(this.pageSize);

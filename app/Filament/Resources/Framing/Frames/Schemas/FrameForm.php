@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Framing\Frames\Schemas;
 
 use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
+use App\Enums\FramePhotoType;
 use App\Enums\FrameProfile;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MoneyInput;
@@ -106,6 +107,7 @@ class FrameForm
                                         'finish' => $get('finish'),
                                         'photo' => $record?->getFirstMediaUrl('corner') ?: null,
                                         'name' => $record?->name,
+                                        'strip' => $record?->stripUrl(),
                                     ]),
                             ]),
                         Section::make('Cost')
@@ -134,6 +136,31 @@ class FrameForm
                                     ->image()
                                     ->maxSize(5120)
                                     ->helperText('Seamless wood-grain or finish texture.'),
+                            ]),
+                        Section::make('Moulding strip (from a photo)')
+                            ->description('Upload any photo of this frame; a clean, repeating strip of the moulding is cut from it and wrapped around customers\' artworks.')
+                            ->schema([
+                                SpatieMediaLibraryFileUpload::make('photo')
+                                    ->label('Frame photo')
+                                    ->collection('photo')
+                                    ->image()
+                                    ->maxSize(12288)
+                                    ->helperText('A corner close-up, the whole frame, or a straight piece. Plain background, shot square-on, good light.'),
+                                View::make('filament.forms.frame-strip-preview')
+                                    ->viewData(fn (?Frame $record): array => [
+                                        'strip' => $record?->getFirstMedia('strip'),
+                                        'hasPhoto' => (bool) $record?->getFirstMedia('photo'),
+                                        'error' => $record?->strip_error,
+                                    ]),
+                                Select::make('strip_photo_type')
+                                    ->label('The photo shows')
+                                    ->options(FramePhotoType::class)
+                                    ->default(FramePhotoType::Auto)
+                                    ->required()
+                                    ->native(false),
+                                Toggle::make('strip_flip')
+                                    ->label('Flip inside / outside edge')
+                                    ->helperText('Turn on if the strip shows the inner (picture) edge at the top.'),
                             ]),
                         Section::make('Status')
                             ->schema(MasterForm::status()),

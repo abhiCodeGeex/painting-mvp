@@ -329,7 +329,13 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                                         [imageUrl]="null"
                                                         [widthMm]="300"
                                                         [heightMm]="400"
-                                                        [frame]="{ colour: f.colour, width_mm: f.width_mm, finish: f.finish }"
+                                                        [frame]="{
+                                                            colour: f.colour,
+                                                            width_mm: f.width_mm,
+                                                            finish: f.finish,
+                                                            strip_url: f.strip_url ?? null,
+                                                            strip_face_mm: f.strip_face_mm ?? null,
+                                                        }"
                                                         [mat]="null"
                                                         [scale]="48 / (400 + 2 * f.width_mm)"
                                                     />
@@ -517,6 +523,7 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                 [fillHeight]="true"
                                 [imageUrl]="previewImage()"
                                 [detailImageUrl]="detailImage()"
+                                [fullImageUrl]="fullImage()"
                                 [widthMm]="pictureW()"
                                 [heightMm]="pictureH()"
                                 [frame]="parts().frame"
@@ -660,6 +667,8 @@ export class LineEditor {
     private objectUrl = signal<string | null>(null);
     protected existingReferences = computed(() => (this.line()?.references ?? []).filter((m) => !this.d().remove_media.includes(m.id)));
     /** Catalogue artworks have a 4096 px version for close-up inspection; uploads use the preview. */
+    /** The original picture for the full-page viewer: the catalogue original, or the customer's own upload. */
+    protected fullImage = computed(() => (this.d().source_type === 'catalog' ? (this.artwork()?.image_full ?? null) : this.previewImage()));
     protected detailImage = computed(() => (this.d().source_type === 'catalog' ? (this.artwork()?.image_detail ?? null) : null));
     protected previewImage = computed(() => {
         const d = this.d();

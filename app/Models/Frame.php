@@ -4,8 +4,10 @@ namespace App\Models;
 
 use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
+use App\Enums\FramePhotoType;
 use App\Enums\FrameProfile;
 use App\Models\Concerns\IsMaster;
+use App\Support\MediaUrl;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Spatie\Image\Enums\Fit;
@@ -31,6 +33,8 @@ class Frame extends Model implements HasMedia
             'price_per_m' => 'integer',
             'waste_percent' => 'decimal:2',
             'is_floater' => 'boolean',
+            'strip_photo_type' => FramePhotoType::class,
+            'strip_flip' => 'boolean',
             'profile_width_mm' => 'integer',
             'profile_depth_mm' => 'integer',
             'rebate_depth_mm' => 'integer',
@@ -55,6 +59,20 @@ class Frame extends Model implements HasMedia
         $this->addMediaCollection('corner')->singleFile()->useDisk('public');
         $this->addMediaCollection('profile')->singleFile()->useDisk('public');
         $this->addMediaCollection('texture')->singleFile()->useDisk('public');
+        // Any photo of the frame (corner, whole frame or straight piece) ...
+        $this->addMediaCollection('photo')->singleFile()->useDisk('public');
+        // ... and the moulding strip built from it (App\Support\FrameStrip). Never uploaded by hand.
+        $this->addMediaCollection('strip')->singleFile()->useDisk('public');
+    }
+
+    /**
+     * Horizontal, tileable moulding strip (top = outer edge, bottom = inner edge), if built.
+     */
+    public function stripUrl(): ?string
+    {
+        $strip = $this->getFirstMedia('strip');
+
+        return $strip ? MediaUrl::for($strip) : null;
     }
 
     public function registerMediaConversions(?Media $media = null): void

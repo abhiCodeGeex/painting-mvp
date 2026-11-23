@@ -77,6 +77,7 @@ export interface EnquiryLine {
     };
     preview_image: string | null;
     detail_image?: string | null;
+    full_image?: string | null;
     references: MediaFile[];
     artwork_photo: MediaFile | null;
     hi_res: MediaFile | null;
@@ -139,6 +140,7 @@ export interface CatalogArtwork {
     thumb: string | null;
     image: string | null;
     image_detail?: string | null;
+    image_full?: string | null;
     native_width_mm: number | null;
     native_height_mm: number | null;
     min_width_mm: number | null;
@@ -166,6 +168,9 @@ export interface CatalogFrame {
     substrate_ids: number[];
     max_inner_width_mm: number | null;
     max_inner_height_mm: number | null;
+    /** Tileable photo strip of the moulding face (top row = outer edge, bottom row = sight edge). */
+    strip_url?: string | null;
+    strip_face_mm?: number | null;
 }
 
 export interface CatalogMat {

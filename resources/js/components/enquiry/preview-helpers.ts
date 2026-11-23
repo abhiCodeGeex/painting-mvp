@@ -13,6 +13,14 @@ export interface PreviewFrame {
     profile?: FrameProfileShape;
     /** e.g. "Wood" — wooden mouldings get a subtle grain in 3D. */
     material?: string;
+    /**
+     * Photo of the moulding face as a horizontal strip, tileable along X: top row = outer edge,
+     * bottom row = inner (sight) edge, image height = the face width. When set, the previews wrap
+     * it around the artwork with mitred corners instead of drawing the flat colour.
+     */
+    strip_url?: string | null;
+    /** Face width (mm) the strip's height represents (informational; the rails use width_mm). */
+    strip_face_mm?: number | null;
 }
 
 export interface PreviewMat {
@@ -60,6 +68,8 @@ export function previewParts(
                   finish: frame.finish,
                   profile: frame.profile ?? (frame.is_floater ? 'floater' : 'flat'),
                   material: frame.material,
+                  strip_url: frame.strip_url ?? null,
+                  strip_face_mm: frame.strip_face_mm ?? null,
               }
             : null,
         mat: mat

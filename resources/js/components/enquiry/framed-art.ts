@@ -24,6 +24,9 @@ function frameBackground(colour: string, finish: string): string {
     host: { class: 'contents' },
     template: `
         <span [style]="frameStyle()">
+            @for (rail of rails(); track $index) {
+                <span aria-hidden="true" [style]="rail"></span>
+            }
             <span [style]="matStyle()">
                 <span [style]="imageStyle()" class="relative">
                     @if (!imageUrl()) {
@@ -51,9 +54,71 @@ export class FramedArt {
         return `${Math.max(min, mm * this.scale())}px`;
     }
 
+    /** Face width of the frame in px (the frame span's padding). */
+    private faceMin(mm: number): number {
+        return Math.max(2, mm * this.scale());
+    }
+
+    /**
+     * The four rails cut from the frame's photo strip, like a real mitred frame. Each rail is the
+     * strip tiled along its length (background repeat-x, scaled so the strip's height is the face
+     * width), rotated 0/90/180/270° so the strip's top row (outer edge) always faces outward, and
+     * clipped to a trapezoid so neighbouring rails meet on the 45° diagonals. Background images are
+     * re-rasterised from the source when the whole piece is scaled with a CSS transform, so the
+     * frame stays as sharp as the strip photo when zoomed.
+     */
+    protected rails = computed<Record<string, string>[]>(() => {
+        const frame = this.frame();
+        const url = frame?.strip_url;
+        if (!frame || !url) return [];
+        const s = this.scale();
+        const mat = this.mat();
+        const f = this.faceMin(frame.width_mm);
+        // Same sizes as the spans below (including their minimums), so the rails fit exactly.
+        const side = mat ? Math.max(2, mat.border_mm * s) : 0;
+        const bottom = mat ? Math.max(2, (mat.border_mm + (mat.bottom_weight_mm ?? 0)) * s) : 0;
+        const w = Math.max(4, this.widthMm() * s) + 2 * side + 2 * f;
+        const h = Math.max(4, this.heightMm() * s) + side + bottom + 2 * f;
+        // Top/bottom rails reach a hair past the mitre so no background seam shows through.
+        const o = Math.min(0.6, f / 8);
+        const clip = `polygon(0 0, 100% 0, calc(100% - ${f - o}px) 100%, ${f - o}px 100%)`;
+        const clipSide = `polygon(0 0, 100% 0, calc(100% - ${f}px) 100%, ${f}px 100%)`;
+        const rail = (length: number, left: number, top: number, angle: number, tint: string, sideRail: boolean) => ({
+            position: 'absolute',
+            left: `${left}px`,
+            top: `${top}px`,
+            width: `${length}px`,
+            height: `${f}px`,
+            transform: angle ? `rotate(${angle}deg)` : 'none',
+            'background-image': `linear-gradient(${tint}, ${tint}), url("${url}")`,
+            'background-size': `100% 100%, auto ${f}px`,
+            'background-repeat': 'no-repeat, repeat-x',
+            'background-position': '0 0, center top',
+            'clip-path': sideRail ? clipSide : clip,
+            'pointer-events': 'none',
+        });
+        // Soft light from the top left: top rail a touch brighter, bottom/right a touch darker.
+        return [
+            rail(h, f / 2 - h / 2, h / 2 - f / 2, -90, 'rgba(255,255,255,.03)', true), // left
+            rail(h, w - f / 2 - h / 2, h / 2 - f / 2, 90, 'rgba(0,0,0,.07)', true), // right
+            rail(w, 0, 0, 0, 'rgba(255,255,255,.06)', false), // top
+            rail(w, 0, h - f, 180, 'rgba(0,0,0,.12)', false), // bottom
+        ];
+    });
+
     protected frameStyle = computed(() => {
         const frame = this.frame();
         const depth = this.depthMm();
+        if (frame?.strip_url) {
+            return {
+                display: 'inline-block',
+                position: 'relative',
+                padding: `${this.faceMin(frame.width_mm)}px`,
+                // Shows only if a mitre seam ever opens up, or while the strip is loading.
+                background: frame.colour,
+                'box-shadow': '0 10px 24px rgba(0,0,0,.35)',
+            };
+        }
         return frame
             ? {
                   display: 'inline-block',

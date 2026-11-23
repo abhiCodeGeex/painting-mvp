@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Artwork;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
@@ -23,6 +24,9 @@ class DatabaseSeeder extends Seeder
                 MuseumArtworkSeeder::class,
                 DemoEnquirySeeder::class,
             ]);
+            // The catalogue shows real paintings only: the generated demo pictures stay for the demo
+            // enquiries (and tests) but are hidden from customers.
+            Artwork::query()->where('code', 'like', 'ART-%')->update(['is_active' => false]);
         }
     }
 }

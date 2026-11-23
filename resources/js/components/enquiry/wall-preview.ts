@@ -13,7 +13,8 @@ import {
     signal,
     viewChild,
 } from '@angular/core';
-import { LoaderCircle } from 'lucide';
+import { LoaderCircle, Maximize2 } from 'lucide';
+import { ArtworkLightbox } from './artwork-lightbox';
 import { FramedArt } from './framed-art';
 import { isLight, outerSize, type GlazingLook, type PreviewFrame, type PreviewMat, type WallPiece } from './preview-helpers';
 import { Room360 } from './room-360';
@@ -40,7 +41,7 @@ function supportsWebGL(): boolean {
  */
 @Component({
     selector: 'wall-preview',
-    imports: [Icon, FramedArt, Room360, WallPhoto],
+    imports: [Icon, FramedArt, Room360, WallPhoto, ArtworkLightbox],
     changeDetection: ChangeDetectionStrategy.OnPush,
     // The host is the flex item of the parent; with fillHeight it passes the free height on to the root.
     host: { '[class]': "fillHeight() ? 'flex min-h-0 min-w-0 flex-col lg:flex-1' : 'block min-w-0'" },
@@ -149,17 +150,45 @@ function supportsWebGL(): boolean {
                 }
             </div>
 
-            <p class="text-muted-foreground text-xs">
-                Finished size ≈ <span class="text-foreground font-medium tabular-nums">{{ finishedLabel() }}</span>{{
-                    quantity() > 1 ? ' · ×' + quantity() : ''
-                }}
-            </p>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="text-muted-foreground text-xs">
+                    Finished size ≈ <span class="text-foreground font-medium tabular-nums">{{ finishedLabel() }}</span>{{
+                        quantity() > 1 ? ' · ×' + quantity() : ''
+                    }}
+                </p>
+                @if (imageUrl()) {
+                    <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs font-medium"
+                        (click)="fullOpen.set(true)"
+                    >
+                        <svg [icon]="Maximize2" class="size-3.5" /> View full size
+                    </button>
+                }
+            </div>
         </div>
+        <artwork-lightbox
+            [(open)]="fullOpen"
+            [title]="title() || 'Your artwork'"
+            [previewUrl]="imageUrl()"
+            [fullUrl]="fullImageUrl() || detailImageUrl() || imageUrl()"
+            [widthMm]="w()"
+            [heightMm]="h()"
+            [frame]="frame()"
+            [mat]="mat()"
+            [depthMm]="depthMm()"
+            [sizeLabel]="'Finished size ≈ ' + finishedLabel()"
+        />
     `,
 })
 export class WallPreview {
     readonly imageUrl = input<string | null>(null);
     readonly detailImageUrl = input<string | null>(null);
+    /** The original picture, for the full-page viewer (pixel-level zoom). */
+    readonly fullImageUrl = input<string | null>(null);
+    readonly title = input('');
+    protected fullOpen = signal(false);
+    protected readonly Maximize2 = Maximize2;
     readonly widthMm = input.required<number>();
     readonly heightMm = input.required<number>();
     readonly frame = input<PreviewFrame | null>(null);

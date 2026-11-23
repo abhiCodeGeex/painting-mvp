@@ -157,7 +157,7 @@ class EnquiryLine extends Model implements HasMedia
      * Image used for previews: catalog main image, the customer's own artwork photo, or the
      * first reference image of a custom creation.
      */
-    public function previewImageUrl(string $conversion = 'preview'): ?string
+    public function previewImageUrl(?string $conversion = 'preview'): ?string
     {
         $media = match ($this->source_type) {
             LineSource::Catalog => $this->artwork?->getFirstMedia('main'),
