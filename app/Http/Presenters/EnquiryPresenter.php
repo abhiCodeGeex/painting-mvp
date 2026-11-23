@@ -121,6 +121,7 @@ class EnquiryPresenter
                 'finishings' => $line->finishings->pluck('name')->all(),
             ],
             'preview_image' => $line->previewImageUrl(),
+            'detail_image' => $line->previewImageUrl('detail'),
             'references' => $line->getMedia('references')->map(fn (Media $m) => self::media($m))->values()->all(),
             'artwork_photo' => ($m = $line->getFirstMedia('artwork_photo')) ? self::media($m) : null,
             'hi_res' => ($m = $line->getFirstMedia('hi_res')) ? self::media($m) : null,

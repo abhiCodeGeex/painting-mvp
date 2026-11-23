@@ -1,0 +1,110 @@
+{
+  "key": "photo-seaview-suite",
+  "title": "Sea-view suite",
+  "kind": "photo",
+  "paintable": false,
+  "credit": "photo: Poly Haven (CC0)",
+  "faceSize": 2048,
+  "faces": {
+    "f": {
+      "dir": [
+        0,
+        0,
+        -1
+      ],
+      "up": [
+        0,
+        1,
+        0
+      ]
+    },
+    "r": {
+      "dir": [
+        1,
+        0,
+        0
+      ],
+      "up": [
+        0,
+        1,
+        0
+      ]
+    },
+    "b": {
+      "dir": [
+        0,
+        0,
+        1
+      ],
+      "up": [
+        0,
+        1,
+        0
+      ]
+    },
+    "l": {
+      "dir": [
+        -1,
+        0,
+        0
+      ],
+      "up": [
+        0,
+        1,
+        0
+      ]
+    },
+    "u": {
+      "dir": [
+        0,
+        1,
+        0
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ]
+    },
+    "d": {
+      "dir": [
+        0,
+        -1,
+        0
+      ],
+      "up": [
+        0,
+        0,
+        -1
+      ]
+    }
+  },
+  "eyeHeight": 1.45,
+  "room": {
+    "width": 3.68,
+    "front": 1.84,
+    "back": 1.84,
+    "height": 2.6999999999999997
+  },
+  "artWall": {
+    "distance": 1.84,
+    "floor": -1.45,
+    "ceiling": 1.25,
+    "minBottom": -0.72,
+    "maxTop": 0.95,
+    "left": -1.55,
+    "right": 0.35
+  },
+  "light": {
+    "file": "light.webp",
+    "scale": 2.0,
+    "rect": [
+      -1.84,
+      0.95,
+      -1.45,
+      1.35
+    ]
+  },
+  "wallAlbedo": 0.8,
+  "knee": 0.8
+}

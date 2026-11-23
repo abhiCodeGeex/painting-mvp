@@ -17,12 +17,11 @@ import { LoaderCircle } from 'lucide';
 import { FramedArt } from './framed-art';
 import { isLight, outerSize, type GlazingLook, type PreviewFrame, type PreviewMat, type WallPiece } from './preview-helpers';
 import { Room360 } from './room-360';
-import { Room3D } from './room-3d';
 import { WallPhoto } from './wall-photo';
 
-type View = '360' | '3d' | 'photo' | 'room' | 'closeup';
+type View = '360' | 'photo' | 'room' | 'closeup';
 
-const VIEW_LABELS: Record<View, string> = { '360': '360° room', '3d': '3D room', photo: 'My wall', room: 'Flat wall', closeup: 'Close-up' };
+const VIEW_LABELS: Record<View, string> = { '360': 'Room 360°', photo: 'My wall', room: 'Flat wall', closeup: 'Close-up' };
 const SOFA_WIDTH = 2000;
 const SOFA_HEIGHT = 850;
 
@@ -41,49 +40,44 @@ function supportsWebGL(): boolean {
  */
 @Component({
     selector: 'wall-preview',
-    imports: [Icon, FramedArt, Room360, Room3D, WallPhoto],
+    imports: [Icon, FramedArt, Room360, WallPhoto],
     changeDetection: ChangeDetectionStrategy.OnPush,
+    // The host is the flex item of the parent; with fillHeight it passes the free height on to the root.
+    host: { '[class]': "fillHeight() ? 'flex min-h-0 min-w-0 flex-col lg:flex-1' : 'block min-w-0'" },
     template: `
         <div [class]="rootClass()">
-            <div class="flex items-center justify-between text-xs">
-                <div class="bg-muted inline-flex rounded-md p-0.5">
-                    @for (v of views; track v) {
-                        <button
-                            type="button"
-                            [class]="
-                                'rounded px-2.5 py-1 font-medium transition ' + (view() === v ? 'bg-background shadow-sm' : 'text-muted-foreground')
-                            "
-                            (click)="view.set(v)"
-                        >
-                            {{ labels[v] }}
-                        </button>
-                    }
-                </div>
-                <span class="text-muted-foreground">Finished size ≈ {{ finishedLabel() }}{{ quantity() > 1 ? ' · ×' + quantity() : '' }}</span>
+            <div
+                role="tablist"
+                aria-label="Preview view"
+                class="bg-muted grid w-full auto-cols-fr grid-flow-col gap-1 rounded-lg p-1 sm:inline-grid sm:w-auto sm:self-start"
+            >
+                @for (v of views; track v) {
+                    <button
+                        type="button"
+                        role="tab"
+                        [attr.aria-selected]="view() === v"
+                        [class]="
+                            'rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition sm:text-sm ' +
+                            (view() === v ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')
+                        "
+                        (click)="view.set(v)"
+                    >
+                        {{ labels[v] }}
+                    </button>
+                }
             </div>
 
             @if (view() === '360') {
-                @defer (on immediate) {
-                    <room-360 [pieces]="pieces()" [wallColour]="wallColour()" />
-                } @placeholder {
-                    <div class="text-muted-foreground flex h-[420px] items-center justify-center gap-2 rounded-lg border text-sm">
-                        <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 360° room…
-                    </div>
-                }
-            }
-
-            @if (view() === '3d') {
-                @defer (on immediate) {
-                    <room-3d [pieces]="pieces()" [wallColour]="wallColour()" [wallWidthMm]="wallWidthMm()" [wallHeightMm]="wallHeightMm()" />
-                } @loading (minimum 100ms) {
-                    <div class="text-muted-foreground flex h-[360px] items-center justify-center gap-2 rounded-lg border text-sm">
-                        <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 3D room…
-                    </div>
-                } @placeholder {
-                    <div class="text-muted-foreground flex h-[360px] items-center justify-center gap-2 rounded-lg border text-sm">
-                        <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 3D room…
-                    </div>
-                }
+                <!-- 16:10 stage (or the free height, with fillHeight), never shorter than 360 px; the room fills it. -->
+                <div [class]="stageClass()">
+                    @defer (on immediate) {
+                        <room-360 class="absolute inset-0 block" height="h-full" [pieces]="pieces()" [wallColour]="wallColour()" />
+                    } @placeholder {
+                        <div class="text-muted-foreground absolute inset-0 flex items-center justify-center gap-2 rounded-lg border text-sm">
+                            <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 360° room…
+                        </div>
+                    }
+                </div>
             }
 
             @if (view() === 'photo') {
@@ -100,10 +94,7 @@ function supportsWebGL(): boolean {
                 }
             }
 
-            <div
-                #box
-                [class]="'w-full overflow-hidden rounded-lg border' + (view() === '360' || view() === '3d' || view() === 'photo' ? ' hidden' : '')"
-            >
+            <div #box [class]="'w-full overflow-hidden rounded-lg border' + (view() === '360' || view() === 'photo' ? ' hidden' : '')">
                 @if (view() === 'room') {
                     <div class="relative" [style.height.px]="(wallH() + floorMm) * scale()" [style.background]="wallColour()">
                         <!-- floor -->
@@ -157,11 +148,18 @@ function supportsWebGL(): boolean {
                     </div>
                 }
             </div>
+
+            <p class="text-muted-foreground text-xs">
+                Finished size ≈ <span class="text-foreground font-medium tabular-nums">{{ finishedLabel() }}</span>{{
+                    quantity() > 1 ? ' · ×' + quantity() : ''
+                }}
+            </p>
         </div>
     `,
 })
 export class WallPreview {
     readonly imageUrl = input<string | null>(null);
+    readonly detailImageUrl = input<string | null>(null);
     readonly widthMm = input.required<number>();
     readonly heightMm = input.required<number>();
     readonly frame = input<PreviewFrame | null>(null);
@@ -175,9 +173,11 @@ export class WallPreview {
     readonly unit = input<Unit>('cm');
     readonly quantity = input(1);
     readonly userClass = input('', { alias: 'class' });
+    /** On large screens, let the 360° room take the free height of a flex-column parent instead of a 16:10 box. */
+    readonly fillHeight = input(false);
 
     private readonly webgl = supportsWebGL();
-    protected readonly views: View[] = this.webgl ? ['360', '3d', 'photo', 'room', 'closeup'] : ['photo', 'room', 'closeup'];
+    protected readonly views: View[] = this.webgl ? ['360', 'photo', 'room', 'closeup'] : ['photo', 'room', 'closeup'];
     protected readonly labels = VIEW_LABELS;
     protected view = signal<View>(this.webgl ? '360' : 'room');
     protected readonly LoaderCircle = LoaderCircle;
@@ -188,7 +188,10 @@ export class WallPreview {
     private box = viewChild<ElementRef<HTMLDivElement>>('box');
     private containerWidth = signal(480);
 
-    protected rootClass = computed(() => cn('flex flex-col gap-2', this.userClass()));
+    protected rootClass = computed(() => cn('flex min-w-0 flex-col gap-3', this.fillHeight() && 'lg:min-h-0 lg:flex-1', this.userClass()));
+    protected stageClass = computed(() =>
+        cn('relative aspect-[16/10] min-h-[340px] w-full sm:min-h-[360px]', this.fillHeight() && 'lg:aspect-auto lg:flex-1'),
+    );
     protected w = computed(() => Math.max(50, this.widthMm() || 0));
     protected h = computed(() => Math.max(50, this.heightMm() || 0));
     /** The artwork as a one-piece list for the 3D room. */
@@ -196,6 +199,7 @@ export class WallPreview {
         {
             id: 'piece',
             imageUrl: this.imageUrl(),
+            detailUrl: this.detailImageUrl(),
             widthMm: this.w(),
             heightMm: this.h(),
             frame: this.frame(),

@@ -114,7 +114,7 @@ def room_configs():
             props=[
                 dict(asset='metal_office_desk', at=(0, 'wall'), rot=0, gap=0.05),
                 dict(asset='modern_arm_chair_01', at=(0, 2.0), rot=180),
-                dict(asset='desk_lamp_arm_01', on='metal_office_desk', rot=20, dx=-0.5),
+                dict(asset='desk_lamp_arm_01', on='metal_office_desk', rot=20, dx=-0.82),
                 dict(asset='potted_plant_02', at=(-2.0, -1.9), rot=0),
             ],
             extras=[dict(kind='shelving', side='r', centre=0.2, width=2.2),
@@ -128,12 +128,13 @@ def room_configs():
             props=[
                 dict(asset='modern_wooden_cabinet', at=(0, 'wall'), rot=0, gap=0.04),
                 dict(asset='ceramic_vase_03', on='modern_wooden_cabinet', rot=0, dx=0.55),
-                dict(asset='dining_table', at=(0, -1.6), rot=90),
-                dict(asset='dining_chair_02', at=(-0.55, -0.95), rot=180),
-                dict(asset='dining_chair_02', at=(0.55, -0.95), rot=180),
-                dict(asset='dining_chair_02', at=(-0.55, -2.25), rot=0),
-                dict(asset='dining_chair_02', at=(0.55, -2.25), rot=0),
+                dict(asset='modern_dining_table', at=(0, -1.6)),
+                dict(asset='dining_chair_02', beside='dining_table', side='l', along=-0.45, rot=-90),
+                dict(asset='dining_chair_02', beside='dining_table', side='l', along=0.45, rot=-90),
+                dict(asset='dining_chair_02', beside='dining_table', side='r', along=-0.45, rot=90),
+                dict(asset='dining_chair_02', beside='dining_table', side='r', along=0.45, rot=90),
                 dict(asset='modern_ceiling_lamp_01', at=(0, -1.6), rot=0, ceiling=True),
+                dict(asset='ceramic_vase_02', on='dining_table', rot=0, dx=0.0),
                 dict(asset='potted_plant_01', at=(-2.5, 'wall'), rot=0, gap=0.3),
             ],
             extras=[dict(kind='books', on='modern_wooden_cabinet', n=3, seed=11, dx=-0.6)],
@@ -163,19 +164,50 @@ def room_configs():
 
 def args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-    opts = {'room': 'living', 'size': 2048, 'samples': 160, 'preview': False}
+    opts = {'room': 'living', 'size': 2048, 'samples': 160, 'preview': False, 'detail_only': False, 'detail_size': 2048}
     i = 0
     while i < len(argv):
         key = argv[i].lstrip('-')
         if key == 'preview':
             opts['preview'] = True
+        elif key == 'detail-only':
+            opts['detail_only'] = True
+        elif key == 'zone-only':
+            opts['zone_only'] = True
         else:
             opts[key] = argv[i + 1]
             i += 1
         i += 1
     opts['size'] = int(opts['size'])
     opts['samples'] = int(opts['samples'])
+    opts['detail_size'] = int(opts.get('detail-size', opts['detail_size']))
     return opts
+
+
+def plaster_paint(name):
+    """Matt emulsion over plaster: a very fine, irregular relief and uneven sheen, like a real wall."""
+    m = principled(name, (WALL_ALBEDO,) * 3, rough=0.9, spec=0.25)
+    nt = m.node_tree
+    b = nt.nodes['Principled BSDF']
+    coord = nt.nodes.new('ShaderNodeTexCoord')
+    fine = nt.nodes.new('ShaderNodeTexNoise')
+    fine.inputs['Scale'].default_value = 900.0
+    fine.inputs['Detail'].default_value = 6.0
+    broad = nt.nodes.new('ShaderNodeTexNoise')
+    broad.inputs['Scale'].default_value = 3.0
+    nt.links.new(coord.outputs['Object'], fine.inputs['Vector'])
+    nt.links.new(coord.outputs['Object'], broad.inputs['Vector'])
+    bump = nt.nodes.new('ShaderNodeBump')
+    bump.inputs['Strength'].default_value = 0.06
+    bump.inputs['Distance'].default_value = 0.0006
+    nt.links.new(fine.outputs['Fac'], bump.inputs['Height'])
+    nt.links.new(bump.outputs['Normal'], b.inputs['Normal'])
+    ramp = nt.nodes.new('ShaderNodeMapRange')
+    ramp.inputs['To Min'].default_value = 0.82
+    ramp.inputs['To Max'].default_value = 0.95
+    nt.links.new(broad.outputs['Fac'], ramp.inputs['Value'])
+    nt.links.new(ramp.outputs['Result'], b.inputs['Roughness'])
+    return m
 
 
 def principled(name, colour=(0.8, 0.8, 0.8), rough=0.5, spec=0.5, metal=0.0):
@@ -302,7 +334,7 @@ def build(cfg):
     x0, x1, y0, y1 = -W / 2, W / 2, -B, F
     t = 0.12  # wall thickness
 
-    wall_mat = principled('wall', (WALL_ALBEDO,) * 3, rough=0.92, spec=0.2)
+    wall_mat = plaster_paint('wall')
     ceiling_mat = principled('ceiling', (0.82, 0.82, 0.81), rough=0.95, spec=0.1)
     trim_mat = principled('trim', (0.86, 0.85, 0.83), rough=0.35, spec=0.5)
     alu_mat = principled('window-frame', (0.05, 0.05, 0.05), rough=0.35, spec=0.5, metal=0.6)
@@ -373,6 +405,10 @@ def build(cfg):
     # furniture
     placed = {}
     for p in cfg['props']:
+        if p['asset'] == 'modern_dining_table':
+            objs = modern_dining_table(*p['at'])
+            placed['dining_table'] = world_bbox(objs)
+            continue
         if p['asset'] == 'modern_bed':
             objs = modern_bed(p['at'][0], y1 - p.get('gap', 0.02))
             placed['modern_bed'] = world_bbox(objs)
@@ -383,7 +419,14 @@ def build(cfg):
             root.scale = (p['sx'], 1, 1)
         bpy.context.view_layer.update()
         lo, hi = world_bbox(objs)
-        if 'on' in p:
+        if 'beside' in p:
+            # A chair along a table's long side, facing it, seat front just under the table edge.
+            base_lo, base_hi = placed[p['beside']]
+            ty = (base_lo.y + base_hi.y) / 2 + p.get('along', 0)
+            depth = hi.x - lo.x
+            tx = base_lo.x - depth / 2 + 0.12 if p['side'] == 'l' else base_hi.x + depth / 2 - 0.12
+            root.location = (tx - (lo.x + hi.x) / 2, ty - (lo.y + hi.y) / 2, -lo.z)
+        elif 'on' in p:
             base_lo, base_hi = placed[p['on']]
             bx, by = (base_lo.x + base_hi.x) / 2 + p.get('dx', 0), (base_lo.y + base_hi.y) / 2
             root.location = (bx - (lo.x + hi.x) / 2, by - (lo.y + hi.y) / 2, base_hi.z - lo.z)
@@ -428,6 +471,22 @@ def soft_box(name, x0, x1, y0, y1, z0, z1, material, bevel=0.03, segments=4, rot
         obj.rotation_euler = rot
     obj['prop'] = True
     return obj
+
+
+def modern_dining_table(cx, cy, width=0.95, length=2.1):
+    """Solid oak top on slim black steel legs, with a linen runner and a bowl: a contemporary dining table."""
+    oak = textured('table-oak', 'rectangular_parquet', 1.6, (0.9, 0.8, 0.68), rough_mul=0.7)
+    steel = principled('table-steel', (0.02, 0.02, 0.02), rough=0.4, metal=0.8)
+    runner = textured('runner', 'rough_linen', 0.4, flat=(0.78, 0.74, 0.66))
+    x0, x1, y0, y1 = cx - width / 2, cx + width / 2, cy - length / 2, cy + length / 2
+    objs = [soft_box('table-top', x0, x1, y0, y1, 0.72, 0.76, oak, bevel=0.006, segments=3)]
+    for (lx, ly) in ((x0 + 0.08, y0 + 0.12), (x1 - 0.08, y0 + 0.12), (x0 + 0.08, y1 - 0.12), (x1 - 0.08, y1 - 0.12)):
+        objs.append(box(f'table-leg-{lx:.2f}-{ly:.2f}', lx - 0.02, lx + 0.02, ly - 0.02, ly + 0.02, 0, 0.72, steel))
+    objs.append(box('table-runner', cx - 0.22, cx + 0.22, y0 + 0.15, y1 - 0.15, 0.76, 0.762, runner))
+    for o in objs:
+        o['prop'] = True
+    bpy.context.view_layer.update()
+    return objs
 
 
 def modern_bed(cx, wall_y, width=1.8, length=2.1):
@@ -724,7 +783,7 @@ def extra_wall_panels(cfg, sides=('l', 'r', 'b')):
                     continue
                 xa, xb = sorted((x, x + inward * p))
                 for k, (z0, z1) in enumerate(((0.3, 0.95), (1.15, top))):
-                    for j, (ya2, yb2, za, zb) in enumerate(((a, b, z0, z0 + t), (a, b, z1 - t, z1), (a, a + t, z0, z1), (b - t, b, z0, z1))):
+                    for j, (ya2, yb2, za, zb) in enumerate(((a, b, z0, z0 + t), (a, b, z1 - t, z1), (a, a + t, z0 + t, z1 - t), (b - t, b, z0 + t, z1 - t))):
                         box(f'panel-{side}-{i}-{k}-{j}', xa, xb, ya2, yb2, za, zb, wall_mat, WALL_INDEX)
         else:
             y = -B
@@ -733,7 +792,7 @@ def extra_wall_panels(cfg, sides=('l', 'r', 'b')):
                 a = -W / 2 + W * i / n + 0.2
                 b = -W / 2 + W * (i + 1) / n - 0.2
                 for k, (z0, z1) in enumerate(((0.3, 0.95), (1.15, top))):
-                    for j, (xa2, xb2, za, zb) in enumerate(((a, b, z0, z0 + t), (a, b, z1 - t, z1), (a, a + t, z0, z1), (b - t, b, z0, z1))):
+                    for j, (xa2, xb2, za, zb) in enumerate(((a, b, z0, z0 + t), (a, b, z1 - t, z1), (a, a + t, z0 + t, z1 - t), (b - t, b, z0 + t, z1 - t))):
                         box(f'panel-b-{i}-{k}-{j}', xa2, xb2, y, y + p, za, zb, wall_mat, WALL_INDEX)
 
 
@@ -811,8 +870,8 @@ def lights(cfg, win, side_x, inward, wy0, wy1):
 
     # soft sun through the window: a gentle patch on the floor, not a hard spotlight
     sun = bpy.data.lights.new('sun', 'SUN')
-    sun.energy = 2.2
-    sun.angle = math.radians(3)
+    sun.energy = 3.6
+    sun.angle = math.radians(2)
     sun.color = colour_k(5600)
     sobj = bpy.data.objects.new('sun', sun)
     sobj.rotation_euler = (math.radians(55), 0, math.radians(-75 * inward))
@@ -927,6 +986,26 @@ def read_exr(path):
     return px.reshape(h, w, 4)[::-1]  # top row first
 
 
+def bloom(img):
+    """A camera lens's soft glow round very bright areas (windows, lamps): what makes a render read as a photo."""
+    bright = np.maximum(img - 1.0, 0.0)
+    if not bright.any():
+        return img
+    glow = np.zeros_like(img)
+    h, w = img.shape[:2]
+    for radius, weight in ((max(2, w // 256), 0.5), (max(4, w // 96), 0.35), (max(8, w // 32), 0.15)):
+        k = np.exp(-0.5 * (np.arange(-3 * radius, 3 * radius + 1) / radius) ** 2)
+        k /= k.sum()
+        g = bright
+        for axis in (0, 1):
+            pad = [(0, 0)] * 3
+            pad[axis] = (len(k) // 2, len(k) // 2)
+            gp = np.pad(g, pad, mode='edge')
+            g = np.apply_along_axis(lambda v: np.convolve(v, k, mode='valid'), axis, gp)
+        glow += weight * g
+    return img + 0.22 * glow
+
+
 def tone(x):
     """Linear up to KNEE, then a soft shoulder approaching 1 (the browser inverts it exactly)."""
     x = np.maximum(x, 0)
@@ -971,7 +1050,7 @@ def three(v):
 def free_zone(cfg):
     """Where art can hang on the art wall without being hidden by furniture, seen from the eye."""
     F, eye, H, W = cfg['front'], cfg['eye'], cfg['height'], cfg['width']
-    band = (-1.3, 1.3)
+    band = (-0.6, 0.6)  # what sits under the artwork's centre; tall things to the sides limit the width
     min_bottom = 0.75
     left, right = -W / 2 + 0.25, W / 2 - 0.25
     tops = {}
@@ -1047,7 +1126,7 @@ def render_room(key, cfg, size, samples, preview):
     dest = os.path.join(PUBLIC, key) if not preview else os.path.join(OUT_TMP, f'{key}-preview')
     os.makedirs(dest, exist_ok=True)
     for name, (beauty, mask) in faces.items():
-        enc = srgb(tone(beauty * exposure))
+        enc = srgb(tone(bloom(beauty * exposure)))
         png = os.path.join(tmp, f'{name}.png')
         save_png(png, enc)
         # The wall mask is its own grey image: browsers drop the colour of fully transparent pixels.
@@ -1091,6 +1170,58 @@ def render_room(key, cfg, size, samples, preview):
     print(f'[{key}] done → {dest}', flush=True)
 
 
+def render_detail(key, cfg, size, samples):
+    """A sharper render of the art wall only (the part of the room people zoom into), seen from the same eye
+    through a narrower lens, so it lines up exactly with the forward face. Uses the room's own exposure."""
+    dest = os.path.join(PUBLIC, key)
+    with open(os.path.join(dest, 'meta.json')) as fh:
+        meta = json.load(fh)
+    exposure = np.array(meta['exposure'], dtype=np.float32)
+    camera, _ = build(cfg)
+    zone = free_zone(cfg)
+    F = cfg['front']
+    # Window over the art wall's free area (+ a margin), in tangent units of the forward face.
+    m = 0.2
+    # Where artworks hang: the central 2.8 m of the free wall (very wide walls would spread the pixels thin).
+    xa, xb = (max(zone['left'], -1.4) - m) / F, (min(zone['right'], 1.4) + m) / F
+    ya, yb = (zone['minBottom'] - m) / F, (zone['maxTop'] + m) / F
+    half = min(0.95, max(xb - xa, yb - ya) / 2)
+    cx = float(np.clip((xa + xb) / 2, -1 + half, 1 - half))
+    cy = float(np.clip((ya + yb) / 2, -1 + half, 1 - half))
+    tmp = os.path.join(OUT_TMP, key + '-detail')
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp, exist_ok=True)
+    out = setup_render(size, samples, tmp)
+    scene = bpy.context.scene
+    camera.rotation_euler = tuple(math.radians(a) for a in FACES['f'][0])
+    camera.data.angle = 2 * math.atan(half)
+    camera.data.shift_x = cx / (2 * half)
+    camera.data.shift_y = cy / (2 * half)
+    out.file_slots[0].path = 'detail-beauty-'
+    out.file_slots[1].path = 'detail-mask-'
+    scene.render.filepath = os.path.join(tmp, 'detail-composite')
+    print(f'[{key}] rendering art-wall detail at {size}px ({size / half / 2:.0f}px face equivalent), {samples} samples', flush=True)
+    bpy.ops.render.render(write_still=False)
+    frame = scene.frame_current
+    beauty = read_exr(os.path.join(tmp, f'detail-beauty-{frame:04d}.exr'))[..., :3]
+    mask = read_exr(os.path.join(tmp, f'detail-mask-{frame:04d}.exr'))[..., 0]
+    png = os.path.join(tmp, 'detail.png')
+    save_png(png, srgb(tone(bloom(beauty * exposure))))
+    mpng = os.path.join(tmp, 'detail-mask.png')
+    save_png(mpng, np.repeat(np.clip(mask, 0, 1)[..., None], 3, axis=2))
+    webp(png, os.path.join(dest, 'detail.webp'), quality=92, alpha=False)
+    webp(mpng, os.path.join(dest, 'detail-mask.webp'), quality=90, alpha=False)
+    # Where it sits on the forward face, in that face's texture coordinates (v up).
+    meta['detail'] = {
+        'file': 'detail.webp', 'mask': 'detail-mask.webp', 'size': size,
+        'u0': round((cx - half + 1) / 2, 6), 'u1': round((cx + half + 1) / 2, 6),
+        'v0': round((cy - half + 1) / 2, 6), 'v1': round((cy + half + 1) / 2, 6),
+    }
+    with open(os.path.join(dest, 'meta.json'), 'w') as fh:
+        json.dump(meta, fh, indent=2)
+    print(f'[{key}] detail done → {dest}', flush=True)
+
+
 def wall_light(cfg, face, exposure):
     """Light arriving on the art wall (linear), sampled on a grid over the wall in metres."""
     beauty, mask = face
@@ -1122,17 +1253,47 @@ def wall_light(cfg, face, exposure):
     return out.astype(np.float32), [round(xa, 4), round(xb, 4), round(za, 4), round(zb, 4)]
 
 
+def write_index(order):
+    """Every room folder with a meta.json (rendered rooms in their order, then the real photographed rooms)."""
+    rooms = []
+    for key in sorted(os.listdir(PUBLIC)):
+        meta_path = os.path.join(PUBLIC, key, 'meta.json')
+        if os.path.isfile(meta_path):
+            with open(meta_path) as fh:
+                meta = json.load(fh)
+            rooms.append({'key': key, 'title': meta['title'], 'kind': meta.get('kind', 'render')})
+    menu = ['living', 'bedroom', 'kitchen', 'office', 'dining', 'lobby',
+            'photo-reading-room', 'photo-seaview-suite', 'photo-sunny-apartment']
+    rooms.sort(key=lambda r: (menu.index(r['key']) if r['key'] in menu else 99, r['title']))
+    with open(os.path.join(PUBLIC, 'index.json'), 'w') as fh:
+        json.dump(rooms, fh, indent=2)
+
+
 def main():
     o = args()
     configs = room_configs()
     keys = list(configs) if o['room'] == 'all' else o['room'].split(',')
     for key in keys:
+        if o.get('zone_only'):
+            # Re-measure where art can hang (no rendering) and update meta.json.
+            build(configs[key])
+            meta_path = os.path.join(PUBLIC, key, 'meta.json')
+            with open(meta_path) as fh:
+                meta = json.load(fh)
+            meta['artWall'].update(free_zone(configs[key]))
+            with open(meta_path, 'w') as fh:
+                json.dump(meta, fh, indent=2)
+            print(f'[{key}] zone {meta["artWall"]}', flush=True)
+            continue
+        if o['detail_only']:
+            render_detail(key, configs[key], o['detail_size'], o['samples'])
+            continue
         render_room(key, configs[key], o['size'], o['samples'], o['preview'])
+        if not o['preview'] and o['detail_size'] > 0:
+            render_detail(key, configs[key], o['detail_size'], o['samples'])
         if not o['preview']:
             # Updated after every room, so each one appears in the viewer as soon as it is ready.
-            index = [{'key': k, 'title': c['title']} for k, c in configs.items() if os.path.exists(os.path.join(PUBLIC, k, 'meta.json'))]
-            with open(os.path.join(PUBLIC, 'index.json'), 'w') as fh:
-                json.dump(index, fh, indent=2)
+            write_index(list(configs))
 
 
 main()

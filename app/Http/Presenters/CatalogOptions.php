@@ -49,6 +49,7 @@ class CatalogOptions
                         ->unique()->values()->all(),
                     'thumb' => ($m = $a->getFirstMedia('main')) ? MediaUrl::for($m, 'thumb') : null,
                     'image' => ($m = $a->getFirstMedia('main')) ? MediaUrl::for($m, 'preview') : null,
+                    'image_detail' => $m ? MediaUrl::for($m, 'detail') : null,
                     'native_width_mm' => $a->native_width_mm,
                     'native_height_mm' => $a->native_height_mm,
                     'min_width_mm' => $a->min_width_mm,

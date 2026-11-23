@@ -99,6 +99,8 @@ export interface WallPiece {
     id: string | number;
     title?: string;
     imageUrl: string | null;
+    /** Larger image (up to 4096 px) for close-up inspection; falls back to imageUrl. */
+    detailUrl?: string | null;
     widthMm: number;
     heightMm: number;
     frame: PreviewFrame | null;

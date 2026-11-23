@@ -76,6 +76,7 @@ export interface EnquiryLine {
         finishings: string[];
     };
     preview_image: string | null;
+    detail_image?: string | null;
     references: MediaFile[];
     artwork_photo: MediaFile | null;
     hi_res: MediaFile | null;
@@ -137,6 +138,7 @@ export interface CatalogArtwork {
     categories: string[];
     thumb: string | null;
     image: string | null;
+    image_detail?: string | null;
     native_width_mm: number | null;
     native_height_mm: number | null;
     min_width_mm: number | null;

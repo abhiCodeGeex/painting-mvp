@@ -409,7 +409,11 @@ export class CancelDialog {
                 </div>
             </div>
 
-            <ui-dialog [open]="!!preview()" (openChange)="!$event && preview.set(null)" contentClass="sm:max-w-4xl">
+            <ui-dialog
+                [open]="!!preview()"
+                (openChange)="!$event && preview.set(null)"
+                contentClass="max-h-[calc(100dvh-2rem)] overflow-y-auto [scrollbar-width:thin] sm:max-w-4xl"
+            >
                 @if (preview(); as p) {
                     <div [class]="dh">
                         <h2 [class]="dt">{{ p.display_title }}</h2>
@@ -417,6 +421,7 @@ export class CancelDialog {
                     </div>
                     <wall-preview
                         [imageUrl]="p.preview_image"
+                        [detailImageUrl]="p.detail_image ?? null"
                         [widthMm]="p.width_mm"
                         [heightMm]="p.height_mm"
                         [frame]="previewParts().frame"

@@ -154,10 +154,10 @@ export class FileGallery {
                         class="pl-8"
                         placeholder="Search title or artist"
                         [value]="query()"
-                        (input)="query.set($any($event.target).value)"
+                        (input)="query.set($any($event.target).value); limit.set(pageSize)"
                     />
                 </div>
-                <select ui-select class="sm:w-60" [value]="category()" (change)="category.set($any($event.target).value)">
+                <select ui-select class="sm:w-60" [value]="category()" (change)="category.set($any($event.target).value); limit.set(pageSize)">
                     <option value="">All categories</option>
                     @for (c of options().categories; track c) {
                         <option [value]="c">
@@ -173,8 +173,8 @@ export class FileGallery {
             @if (list().length === 0) {
                 <p class="text-muted-foreground text-sm">No artworks match your search.</p>
             }
-            <div class="grid max-h-96 grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3">
-                @for (a of list(); track a.id) {
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                @for (a of visible(); track a.id) {
                     <button
                         type="button"
                         [class]="
@@ -202,6 +202,12 @@ export class FileGallery {
                     </button>
                 }
             </div>
+            @if (list().length > visible().length) {
+                <button ui-button type="button" variant="outline" class="w-full" (click)="limit.set(limit() + pageSize * 2)">
+                    Show more artworks
+                    <span class="text-muted-foreground font-normal">({{ list().length - visible().length }} more)</span>
+                </button>
+            }
         </div>
     `,
 })
@@ -213,12 +219,21 @@ export class CatalogPicker {
     protected category = signal('');
     protected readonly Search = Search;
     protected readonly Check = Check;
+    /** The grid grows with "Show more" instead of scrolling inside the dialog. */
+    protected readonly pageSize = 6;
+    protected limit = signal(this.pageSize);
     protected list = computed(() => {
         const q = this.query().toLowerCase();
         const c = this.category();
         return this.options().artworks.filter(
             (a) => (!q || `${a.title} ${a.artist ?? ''} ${a.code}`.toLowerCase().includes(q)) && (!c || a.categories.includes(c)),
         );
+    });
+    /** Always include the selected artwork, so the choice stays visible when the grid is collapsed. */
+    protected visible = computed(() => {
+        const shown = this.list().slice(0, this.limit());
+        const chosen = this.list().find((a) => a.id === this.selectedId());
+        return chosen && !shown.includes(chosen) ? [...shown.slice(0, -1), chosen] : shown;
     });
 }
 

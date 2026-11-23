@@ -1,6 +1,47 @@
 [
   {
     "key": "living",
-    "title": "Living room"
+    "title": "Living room",
+    "kind": "render"
+  },
+  {
+    "key": "bedroom",
+    "title": "Bedroom",
+    "kind": "render"
+  },
+  {
+    "key": "kitchen",
+    "title": "Kitchen",
+    "kind": "render"
+  },
+  {
+    "key": "office",
+    "title": "Office",
+    "kind": "render"
+  },
+  {
+    "key": "dining",
+    "title": "Dining room",
+    "kind": "render"
+  },
+  {
+    "key": "lobby",
+    "title": "Hotel lobby",
+    "kind": "render"
+  },
+  {
+    "key": "photo-reading-room",
+    "title": "Reading room",
+    "kind": "photo"
+  },
+  {
+    "key": "photo-seaview-suite",
+    "title": "Sea-view suite",
+    "kind": "photo"
+  },
+  {
+    "key": "photo-sunny-apartment",
+    "title": "Sunny apartment",
+    "kind": "photo"
   }
 ]

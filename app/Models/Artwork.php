@@ -101,5 +101,7 @@ class Artwork extends Model implements HasMedia
     {
         $this->addMediaConversion('thumb')->fit(Fit::Contain, 300, 300)->nonQueued();
         $this->addMediaConversion('preview')->fit(Fit::Max, 2048, 2048)->nonQueued();
+        // Close-up inspection in the 3D room (loaded only when the customer moves in on the picture).
+        $this->addMediaConversion('detail')->fit(Fit::Max, 4096, 4096)->nonQueued();
     }
 }

@@ -68,11 +68,11 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         @if (estimate()?.mode !== 'hidden') {
-            <div class="bg-background rounded-lg border p-3">
-                <div class="flex items-start justify-between gap-3">
+            <div [class]="inline() ? 'relative' : 'bg-background rounded-lg border p-3'">
+                <div [class]="'flex justify-between gap-3 ' + (inline() ? 'items-center sm:justify-start sm:gap-4' : 'items-start')">
                     <div class="min-w-0">
                         <div class="text-muted-foreground flex items-center gap-1.5 text-xs">
-                            Estimated price
+                            {{ inline() ? 'Estimated price · before GST' : 'Estimated price' }}
                             @if (loading()) {
                                 <svg [icon]="LoaderCircle" class="size-3 animate-spin" />
                             }
@@ -113,7 +113,13 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
 
                 @if (e(); as est) {
                     @if (open()) {
-                        <ul class="mt-2 space-y-1 border-t pt-2 text-xs">
+                        <ul
+                            [class]="
+                                inline()
+                                    ? 'bg-popover text-popover-foreground absolute bottom-full left-0 z-20 mb-3 w-80 max-w-[calc(100vw-3rem)] space-y-1 rounded-lg border p-3 text-xs shadow-lg'
+                                    : 'mt-2 space-y-1 border-t pt-2 text-xs'
+                            "
+                        >
                             @for (item of est.items; track item.label) {
                                 <li class="flex justify-between gap-2">
                                     <span class="text-muted-foreground truncate">{{ item.label }}</span>
@@ -136,9 +142,11 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                     }
                 }
 
-                <p class="text-muted-foreground mt-2 flex items-start gap-1 text-[11px] leading-snug">
-                    <svg [icon]="Info" class="mt-px size-3 shrink-0" /> Indicative estimate before GST — the final price is in your quotation.
-                </p>
+                @if (!inline()) {
+                    <p class="text-muted-foreground mt-2 flex items-start gap-1 text-[11px] leading-snug">
+                        <svg [icon]="Info" class="mt-px size-3 shrink-0" /> Indicative estimate before GST — the final price is in your quotation.
+                    </p>
+                }
             </div>
         }
     `,
@@ -146,6 +154,8 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
 export class PriceEstimateBox {
     readonly estimate = input<LineEstimate | null>(null);
     readonly loading = input(false);
+    /** Borderless, single-line version for a dialog footer; the breakdown opens as a popover above it. */
+    readonly inline = input(false);
     protected open = signal(false);
     protected e = computed(() => (this.estimate()?.available ? this.estimate() : null));
     protected qty = computed(() => this.estimate()?.quantity ?? 1);

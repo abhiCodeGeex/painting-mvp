@@ -132,6 +132,11 @@ class EnquiryLine extends Model implements HasMedia
             ->fit(Fit::Max, 1600, 1600)
             ->performOnCollections('references', 'artwork_photo')
             ->nonQueued();
+        // Close-up inspection in the 3D room (loaded only when the customer moves in on the picture).
+        $this->addMediaConversion('detail')
+            ->fit(Fit::Max, 4096, 4096)
+            ->performOnCollections('references', 'artwork_photo')
+            ->nonQueued();
         $this->addMediaConversion('thumb')
             ->fit(Fit::Contain, 300, 300)
             ->performOnCollections('references', 'artwork_photo')
@@ -152,7 +157,7 @@ class EnquiryLine extends Model implements HasMedia
      * Image used for previews: catalog main image, the customer's own artwork photo, or the
      * first reference image of a custom creation.
      */
-    public function previewImageUrl(): ?string
+    public function previewImageUrl(string $conversion = 'preview'): ?string
     {
         $media = match ($this->source_type) {
             LineSource::Catalog => $this->artwork?->getFirstMedia('main'),
@@ -164,7 +169,7 @@ class EnquiryLine extends Model implements HasMedia
             return null;
         }
 
-        return MediaUrl::for($media, 'preview');
+        return MediaUrl::for($media, $conversion);
     }
 
     /** e.g. "50 × 70 cm". */

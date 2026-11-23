@@ -12,8 +12,10 @@ import {
     untracked,
     viewChild,
 } from '@angular/core';
-import { Download, Expand, Eye, LoaderCircle, Minimize, RotateCcw, Smartphone, ZoomIn, ZoomOut } from 'lucide';
+import { ArrowLeft, Box, Camera, Download, Expand, Eye, LoaderCircle, Minimize, RotateCcw, ScanSearch, Smartphone, ZoomIn, ZoomOut } from 'lucide';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { ArView } from './ar-view';
 import { WALL_COLOURS, type WallPiece } from './preview-helpers';
 import { buildArtwork, coverTexture, disposeTree, gradientTexture, M } from './three/scene-parts';
 
@@ -41,10 +43,20 @@ interface RoomMeta {
     faceSize: number;
     faces: Record<string, FaceInfo>;
     eyeHeight: number;
+    room?: { width: number; front: number; back: number; height: number };
     artWall: { distance: number; floor: number; ceiling: number; minBottom: number; maxTop: number; left: number; right: number };
     light: { file: string; scale: number; rect: [number, number, number, number] };
     wallAlbedo: number;
     knee: number;
+    /** Photographed rooms: only the art wall can be repainted (a feature wall), from its own colour. */
+    paintable?: boolean;
+    paintScope?: 'room' | 'art-wall';
+    /** The painted wall's own colour (linear RGB) — repainting scales by new colour ÷ this. */
+    wallColour?: [number, number, number];
+    kind?: 'render' | 'photo';
+    credit?: string;
+    /** Sharper render of the art wall, laid over the forward face (texture coordinates of that face). */
+    detail?: { file: string; mask: string; size: number; u0: number; u1: number; v0: number; v1: number };
 }
 
 interface PieceDims {
@@ -61,6 +73,7 @@ const BASE = '/3d/rooms';
 const FACE_ORDER = ['f', 'l', 'r', 'b', 'd', 'u'];
 const SKY_RADIUS = 50;
 const GAP = 0.08;
+const SNAP = 0.04;
 const ROOM_KEY = 'room-360-style';
 
 function dimsOf(p: WallPiece): PieceDims {
@@ -99,9 +112,46 @@ const TONE_GLSL = /* glsl */ `
     }
 `;
 
+/** A tileable plain-weave canvas normal map (threads over/under), drawn once. */
+function weaveNormalMap(): THREE.Texture {
+    const n = 128;
+    const h = new Float32Array(n * n);
+    const threads = 8;
+    for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+            const u = (x / n) * threads;
+            const v = (y / n) * threads;
+            const warp = Math.sin(Math.PI * (u % 1)) ** 0.6; // round thread profile
+            const weft = Math.sin(Math.PI * (v % 1)) ** 0.6;
+            const over = (Math.floor(u) + Math.floor(v)) % 2 === 0;
+            h[y * n + x] = over ? warp * 0.65 + weft * 0.35 : weft * 0.65 + warp * 0.35;
+        }
+    }
+    const data = new Uint8Array(n * n * 4);
+    for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+            const hx = h[y * n + ((x + 1) % n)] - h[y * n + ((x - 1 + n) % n)];
+            const hy = h[((y + 1) % n) * n + x] - h[((y - 1 + n) % n) * n + x];
+            const v = new THREE.Vector3(-hx * 2, -hy * 2, 1).normalize();
+            const i = (y * n + x) * 4;
+            data[i] = (v.x * 0.5 + 0.5) * 255;
+            data[i + 1] = (v.y * 0.5 + 0.5) * 255;
+            data[i + 2] = (v.z * 0.5 + 0.5) * 255;
+            data[i + 3] = 255;
+        }
+    }
+    const t = new THREE.DataTexture(data, n, n);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+}
+
 @Component({
     selector: 'room-360',
-    imports: [Icon],
+    imports: [Icon, ArView],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <div #root [class]="'relative w-full overflow-hidden rounded-lg border bg-neutral-900 select-none ' + (fullscreen() ? 'h-full' : height())">
@@ -112,6 +162,15 @@ const TONE_GLSL = /* glsl */ `
                 style="transition: opacity 0.5s"
             ></div>
 
+            @if (switching(); as title) {
+                <div
+                    class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-neutral-900/70 text-sm text-white backdrop-blur-sm"
+                >
+                    <svg [icon]="LoaderCircle" class="size-5 animate-spin" />
+                    Loading {{ title }}…
+                </div>
+            }
+
             @if (!shown()) {
                 <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-white/80">
                     <svg [icon]="LoaderCircle" class="size-5 animate-spin" />
@@ -120,16 +179,20 @@ const TONE_GLSL = /* glsl */ `
             }
 
             <!-- rooms -->
-            <div class="absolute top-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap gap-1">
+            <div class="absolute top-2 left-2 flex max-w-[calc(100%-1rem)] [scrollbar-width:none] gap-1 overflow-x-auto">
                 @for (r of rooms(); track r.key) {
                     <button
                         type="button"
                         [class]="
-                            'rounded-full px-2.5 py-1 text-xs font-medium backdrop-blur transition ' +
+                            'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap backdrop-blur transition ' +
                             (r.key === roomKey() ? 'bg-white text-neutral-900 shadow' : 'bg-black/45 text-white hover:bg-black/60')
                         "
+                        [title]="r.kind === 'photo' ? r.title + ' — a real photographed room' : r.title"
                         (click)="chooseRoom(r.key)"
                     >
+                        @if (r.kind === 'photo') {
+                            <svg [icon]="Camera" class="-mt-px mr-0.5 inline size-3" />
+                        }
                         {{ r.title }}
                     </button>
                 }
@@ -153,21 +216,44 @@ const TONE_GLSL = /* glsl */ `
 
             <!-- wall colours + tools -->
             <div class="absolute inset-x-2 bottom-2 flex flex-wrap items-end justify-between gap-2">
-                <div class="flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 backdrop-blur" title="Wall colour">
-                    @for (c of colours; track c.hex) {
-                        <button
-                            type="button"
-                            [attr.aria-label]="'Wall colour ' + c.name"
-                            [title]="c.name"
-                            [class]="
-                                'size-5 rounded-full border transition ' +
-                                (sameColour(c.hex) ? 'scale-110 border-white ring-2 ring-white/70' : 'border-white/40')
-                            "
-                            [style.background]="c.hex"
-                            (click)="wall.set(c.hex)"
-                        ></button>
-                    }
-                </div>
+                @if (paintable()) {
+                    <div
+                        class="flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 backdrop-blur"
+                        [title]="isPhoto() ? 'Paint the artwork wall' : 'Wall colour'"
+                    >
+                        @if (isPhoto()) {
+                            <button
+                                type="button"
+                                title="The wall as photographed"
+                                [class]="
+                                    'rounded-full border px-2 text-[11px] leading-5 text-white transition ' +
+                                    (wall() === 'original' ? 'border-white bg-white/25' : 'border-white/40')
+                                "
+                                (click)="wall.set('original')"
+                            >
+                                Original
+                            </button>
+                        }
+                        @for (c of colours; track c.hex) {
+                            <button
+                                type="button"
+                                [attr.aria-label]="'Wall colour ' + c.name"
+                                [title]="c.name"
+                                [class]="
+                                    'size-5 rounded-full border transition ' +
+                                    (sameColour(c.hex) ? 'scale-110 border-white ring-2 ring-white/70' : 'border-white/40')
+                                "
+                                [style.background]="c.hex"
+                                (click)="wall.set(c.hex)"
+                            ></button>
+                        }
+                    </div>
+                }
+                @if (credit()) {
+                    <div class="pointer-events-none absolute -top-5 left-1 text-[10px] text-white/70 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]">
+                        Real photographed room · {{ credit() }}
+                    </div>
+                }
                 <div class="flex items-center gap-1 rounded-full bg-black/45 p-1 backdrop-blur">
                     @for (b of buttons(); track b.label) {
                         <button
@@ -184,12 +270,27 @@ const TONE_GLSL = /* glsl */ `
             </div>
 
             <div
-                class="pointer-events-none absolute bottom-12 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2.5 py-1 text-[11px] text-white/80 transition-opacity"
+                class="pointer-events-none absolute bottom-14 left-1/2 hidden max-w-[80%] -translate-x-1/2 truncate rounded-full bg-black/40 px-2.5 py-1 text-[11px] text-white/80 transition-opacity sm:block"
                 [style.opacity]="hint() ? 1 : 0"
             >
-                Drag to look around · scroll or pinch to zoom
+                @if (inspecting()) {
+                    Drag to walk round · scroll to move closer · right-drag to slide
+                } @else {
+                    Drag to look around · drag the artwork to move it · zoom in to inspect
+                }
             </div>
+
+            @if (inspecting()) {
+                <button
+                    type="button"
+                    class="absolute top-11 left-2 z-10 flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-neutral-900 shadow"
+                    (click)="exitInspect()"
+                >
+                    <svg [icon]="ArrowLeft" class="size-3.5" /> Back to the room
+                </button>
+            }
         </div>
+        <ar-view [(open)]="arOpen" [glb]="arModel()" [title]="arTitle()" />
     `,
 })
 export class Room360 implements OnDestroy {
@@ -199,7 +300,7 @@ export class Room360 implements OnDestroy {
 
     protected readonly LoaderCircle = LoaderCircle;
     protected readonly colours = WALL_COLOURS;
-    protected rooms = signal<{ key: string; title: string }[]>([]);
+    protected rooms = signal<{ key: string; title: string; kind?: string }[]>([]);
     protected roomKey = signal<string>(this.savedRoom());
     protected wall = signal<string>('#EDE8E1');
     protected shown = signal(false);
@@ -208,6 +309,31 @@ export class Room360 implements OnDestroy {
     protected hint = signal(true);
     protected fullscreen = signal(false);
     protected notice = signal('');
+    protected paintable = signal(true);
+    protected isPhoto = signal(false);
+    /** Title of the room being switched to (an overlay blocks the old room until the new one is shown). */
+    protected switching = signal('');
+    protected credit = signal('');
+    protected arOpen = signal(false);
+    /** Close-up 3D inspection of one artwork (true 3D camera), instead of the fixed-eye 360° view. */
+    protected inspecting = signal(false);
+    protected readonly ArrowLeft = ArrowLeft;
+    protected readonly Camera = Camera;
+    private inspectKey: string | null = null;
+    /** True while the camera glides to the artwork (the orbit controls wait until it has arrived). */
+    private gliding = false;
+    private controls: OrbitControls | null = null;
+    private wallPlane: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
+    private weave: THREE.Texture | null = null;
+    protected arModel = signal<Blob | null>(null);
+    protected arTitle = computed(() => {
+        const title = this.pieces()[0]?.title;
+        return this.pieces().length > 1 ? 'your gallery wall' : title ? `“${title}”` : 'your artwork';
+    });
+    /** Where the customer dragged each artwork (metres on the art wall), by piece key. */
+    private offsets = signal<Record<string, { x: number; y: number }>>({});
+    private pieceGroups = new Map<string, THREE.Group>();
+    private raycaster = new THREE.Raycaster();
 
     private root = viewChild.required<ElementRef<HTMLDivElement>>('root');
     private host = viewChild.required<ElementRef<HTMLDivElement>>('host');
@@ -252,11 +378,13 @@ export class Room360 implements OnDestroy {
     private dims = computed(() => this.pieces().map((p) => ({ piece: p, key: String(p.id), d: dimsOf(p) })));
 
     protected buttons = computed(() => [
-        { label: 'Look at the artwork', icon: Eye, run: () => this.lookAtArt(true) },
+        { label: 'Look at the artwork', icon: Eye, run: () => (this.inspecting() ? this.exitInspect() : this.lookAtArt(true)) },
+        { label: 'Inspect up close in 3D', icon: ScanSearch, run: () => this.enterInspect(this.pieceGroups.keys().next().value ?? null) },
         { label: 'Zoom in', icon: ZoomIn, run: () => this.zoomBy(0.8) },
         { label: 'Zoom out', icon: ZoomOut, run: () => this.zoomBy(1.25) },
         { label: 'Reset view', icon: RotateCcw, run: () => this.lookAtArt(false) },
         { label: 'Save 4K picture', icon: Download, run: () => this.saveImage() },
+        { label: 'View on your wall (AR)', icon: Box, run: () => void this.openAr() },
         ...(this.canGyro
             ? [
                   {
@@ -277,6 +405,9 @@ export class Room360 implements OnDestroy {
         effect(() => this.wall.set(this.wallColour() || '#EDE8E1'));
 
         afterNextRender(() => {
+            // The hint fades on its own after a few seconds (and on first interaction).
+            const hintTimer = setTimeout(() => this.hint.set(false), 6000);
+            this.cleanup.push(() => clearTimeout(hintTimer));
             this.init();
             void this.loadIndex();
         });
@@ -292,9 +423,8 @@ export class Room360 implements OnDestroy {
 
         // Wall colour → re-paint (a uniform; no reload).
         effect(() => {
-            const c = hexToLinear(this.wall());
-            const albedo = this.meta?.wallAlbedo ?? 0.8;
-            this.uniforms.wallRatio.value.set(c.x / albedo, c.y / albedo, c.z / albedo);
+            this.wall();
+            this.updateWallRatio();
             this.requestFrame();
             // Glass and metal frames reflect the repainted room too (rebuilt once the colour settles).
             clearTimeout(this.envTimer);
@@ -315,8 +445,12 @@ export class Room360 implements OnDestroy {
 
         // Artwork changes → rebuild the pieces.
         effect(() => {
-            this.dims();
+            const keys = new Set(this.dims().map((p) => p.key));
             this.pictureVersion();
+            untracked(() => {
+                const kept = Object.fromEntries(Object.entries(this.offsets()).filter(([k]) => keys.has(k)));
+                if (Object.keys(kept).length !== Object.keys(this.offsets()).length) this.offsets.set(kept);
+            });
             untracked(() => {
                 if (this.meta) this.buildPieces();
             });
@@ -373,7 +507,7 @@ export class Room360 implements OnDestroy {
     private async loadIndex(): Promise<void> {
         try {
             const res = await fetch(`${BASE}/index.json`, { cache: 'no-cache' });
-            const list = (await res.json()) as { key: string; title: string }[];
+            const list = (await res.json()) as { key: string; title: string; kind?: string }[];
             if (!list.length) throw new Error('no rooms');
             this.rooms.set(list);
             if (!list.some((r) => r.key === this.roomKey())) this.roomKey.set(list[0].key);
@@ -384,6 +518,7 @@ export class Room360 implements OnDestroy {
 
     protected chooseRoom(key: string): void {
         if (key === this.roomKey()) return;
+        this.exitInspect();
         this.roomKey.set(key);
         try {
             localStorage.setItem(ROOM_KEY, key);
@@ -426,6 +561,7 @@ export class Room360 implements OnDestroy {
         const token = ++this.loadToken;
         const dir = `${BASE}/${key}`;
         this.error.set('');
+        if (this.meta) this.switching.set(this.rooms().find((r) => r.key === key)?.title ?? 'the room');
         try {
             const meta = (await (await fetch(`${dir}/meta.json`)).json()) as RoomMeta;
             // Small faces first: the room appears within a moment, then sharpens.
@@ -435,16 +571,24 @@ export class Room360 implements OnDestroy {
             ]);
             if (token !== this.loadToken || this.destroyed) return;
 
+            this.switching.set('');
             const firstLoad = !this.meta;
+            this.exitInspect();
+            this.camera.position.set(0, 0, 0);
             this.meta = meta;
+            this.paintable.set(meta.paintable !== false);
+            this.isPhoto.set(meta.kind === 'photo');
+            // A photographed room opens as photographed; the customer can then repaint its art wall.
+            if (meta.kind === 'photo') this.wall.set('original');
+            else if (this.wall() === 'original') this.wall.set(this.wallColour() || '#EDE8E1');
+            this.credit.set(meta.credit ?? '');
             const [xa, xb, za, zb] = meta.light.rect;
             this.uniforms.roomLight.value?.dispose();
             this.uniforms.roomLight.value = light;
             this.uniforms.roomRect.value.set(xa, xb, za, zb);
             this.uniforms.roomLightScale.value = meta.light.scale;
             this.uniforms.roomKnee.value = meta.knee;
-            const c = hexToLinear(this.wall());
-            this.uniforms.wallRatio.value.set(c.x / meta.wallAlbedo, c.y / meta.wallAlbedo, c.z / meta.wallAlbedo);
+            this.updateWallRatio();
 
             this.buildSky(meta, (f) => {
                 const i = FACE_ORDER.indexOf(f);
@@ -452,7 +596,9 @@ export class Room360 implements OnDestroy {
             });
             this.buildEnvironment();
             this.buildPieces();
-            if (firstLoad) this.lookAtArt(false, true);
+            this.offsets.set({});
+            this.buildPieces();
+            this.lookAtArt(false, firstLoad);
             this.shown.set(true);
             this.requestFrame();
 
@@ -476,10 +622,25 @@ export class Room360 implements OnDestroy {
                 }
                 this.swapFace(f, map, mask);
             }
+            if (meta.detail) {
+                const [map, mask] = await Promise.all([
+                    this.loadTexture(`${dir}/${meta.detail.file}`, true),
+                    this.loadTexture(`${dir}/${meta.detail.mask}`, false),
+                ]);
+                if (token !== this.loadToken || this.destroyed) {
+                    map.dispose();
+                    mask.dispose();
+                    return;
+                }
+                this.renderer.initTexture(map);
+                this.renderer.initTexture(mask);
+                this.addDetail(meta, map, mask);
+            }
             if (token === this.loadToken) this.loadingHd.set(false);
             this.loadedRoom = key;
         } catch {
             if (token !== this.loadToken) return;
+            this.switching.set('');
             this.loadingHd.set(false);
             const message = 'This room could not be loaded. Please try another one.';
             if (this.shown()) {
@@ -580,6 +741,38 @@ export class Room360 implements OnDestroy {
         }
     }
 
+    /** The sharper art-wall render, exactly over its part of the forward face. */
+    private addDetail(meta: RoomMeta, map: THREE.Texture, mask: THREE.Texture): void {
+        const d = meta.detail!;
+        const info = meta.faces['f'];
+        const dir = new THREE.Vector3(...info.dir);
+        const up = new THREE.Vector3(...info.up);
+        const right = new THREE.Vector3().crossVectors(dir, up);
+        const at = (u: number, v: number) =>
+            dir
+                .clone()
+                .add(right.clone().multiplyScalar(2 * u - 1))
+                .add(up.clone().multiplyScalar(2 * v - 1))
+                .multiplyScalar(SKY_RADIUS);
+        const corners = [at(d.u0, d.v0), at(d.u1, d.v0), at(d.u1, d.v1), at(d.u0, d.v1)];
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+            'position',
+            new THREE.Float32BufferAttribute(
+                corners.flatMap((v) => [v.x, v.y, v.z]),
+                3,
+            ),
+        );
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+        geometry.setIndex([0, 1, 2, 0, 2, 3]);
+        const mesh = new THREE.Mesh(geometry, this.skyMaterial(map, mask));
+        mesh.name = 'detail';
+        mesh.renderOrder = -9; // over the forward face
+        mesh.frustumCulled = false;
+        this.sky.add(mesh);
+        this.requestFrame();
+    }
+
     private swapFace(face: string, map: THREE.Texture, mask: THREE.Texture): void {
         const mesh = this.sky.getObjectByName(face) as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
         if (!mesh) return;
@@ -634,14 +827,27 @@ export class Room360 implements OnDestroy {
         const free = zone.right - zone.left;
         const cx = Math.abs((zone.left + zone.right) / 2) < 0.05 ? 0 : (zone.left + zone.right) / 2;
         let x = cx - rowW / 2;
+        const offsets = this.offsets();
         const placed = dims.map(({ key, d, piece }) => {
             const centre = x + d.outerW / 2;
             x += d.outerW + GAP;
-            return { key, d, piece, x: centre, y };
+            return { key, d, piece, x: offsets[key]?.x ?? centre, y: offsets[key]?.y ?? y };
         });
-        const tooWide = rowW > free + 0.01;
+        const tooWide = !Object.keys(offsets).length && rowW > free + 0.01;
         const tooTall = y + maxH / 2 > zone.maxTop + 0.01 || y - maxH / 2 < zone.minBottom - 0.01;
-        return { placed, tooBig: tooWide || tooTall, rowW, maxH, y, cx };
+        // Bounds of the arrangement (after any dragging), for framing the view.
+        const minX = Math.min(...placed.map((p) => p.x - p.d.outerW / 2));
+        const maxX = Math.max(...placed.map((p) => p.x + p.d.outerW / 2));
+        const minY = Math.min(...placed.map((p) => p.y - p.d.outerH / 2));
+        const maxY = Math.max(...placed.map((p) => p.y + p.d.outerH / 2));
+        return {
+            placed,
+            tooBig: tooWide || (!Object.keys(offsets).length && tooTall),
+            rowW: placed.length ? maxX - minX : rowW,
+            maxH: placed.length ? maxY - minY : maxH,
+            y: placed.length ? (minY + maxY) / 2 : y,
+            cx: placed.length ? (minX + maxX) / 2 : cx,
+        };
     }
 
     private buildPieces(): void {
@@ -654,16 +860,19 @@ export class Room360 implements OnDestroy {
         this.pieceTextures.splice(0).forEach((t) => t.dispose());
         const { placed, tooBig } = this.layout(meta);
         this.notice.set(tooBig ? 'Your artwork is larger than the free space on this wall — try a bigger room, such as the Hotel lobby.' : '');
-        for (const { piece, d, x, y } of placed) {
+        this.pieceGroups.clear();
+        for (const { piece, d, x, y, key } of placed) {
             const group = buildArtwork(d, {
                 frame: piece.frame,
                 mat: piece.mat,
                 glazing: piece.glazing,
                 depthMm: piece.depthMm,
                 edgeStyle: piece.edgeStyle,
-                texture: this.pictureTexture(piece.imageUrl, d.picW, d.picH),
+                texture: this.pictureTexture((this.inspecting() && piece.detailUrl) || piece.imageUrl, d.picW, d.picH, piece.imageUrl),
             });
             group.position.set(x, y, -meta.artWall.distance + 0.002);
+            group.userData['pieceKey'] = key;
+            this.pieceGroups.set(key, group);
             group.traverse((o) => {
                 const mesh = o as THREE.Mesh;
                 if (!mesh.isMesh) return;
@@ -673,6 +882,7 @@ export class Room360 implements OnDestroy {
                 mats.forEach((m) => this.lightByRoom(m, mesh.name));
             });
             this.art.add(group);
+            if (this.inspecting() && (piece.depthMm > 0 || !piece.frame)) this.addCanvasWeave(group);
         }
         this.requestFrame();
     }
@@ -722,8 +932,12 @@ export class Room360 implements OnDestroy {
         material.needsUpdate = true;
     }
 
-    private pictureTexture(url: string | null, picW: number, picH: number): THREE.Texture {
+    private pictureTexture(url: string | null, picW: number, picH: number, fallback: string | null = null): THREE.Texture {
         if (!url) return this.placeholder;
+        if (fallback && fallback !== url && !this.textures.has(url) && this.textures.has(fallback)) {
+            this.pictureTexture(url, picW, picH); // start loading the sharper one
+            return this.pictureTexture(fallback, picW, picH);
+        }
         const loaded = this.textures.get(url);
         if (loaded) {
             const cropped = coverTexture(loaded, picW, picH);
@@ -779,13 +993,29 @@ export class Room360 implements OnDestroy {
      * room never turns soft: vertical field of view ≥ screen height ÷ panorama pixels per degree.
      */
     private clampFov(fov: number): number {
-        const face = this.meta?.faceSize ?? 1536;
+        return THREE.MathUtils.clamp(fov, this.minFov(), 95);
+    }
+
+    /** Pixels per 90° of the image under the centre of the view: the art-wall detail is ~4× the room. */
+    private sharpnessInView(): number {
+        const meta = this.meta;
+        const face = meta?.faceSize ?? 1536;
+        const d = meta?.detail;
+        if (!d || !this.sky.getObjectByName('detail')) return face;
+        const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, -this.yaw, 0, 'YXZ'));
+        if (dir.z >= -0.05) return face;
+        const u = (dir.x / -dir.z + 1) / 2;
+        const v = (dir.y / -dir.z + 1) / 2;
+        const inside = u > d.u0 && u < d.u1 && v > d.v0 && v < d.v1;
+        return inside ? d.size / (d.u1 - d.u0) : face;
+    }
+
+    private minFov(): number {
         // CSS pixels (a little extra on high-DPI screens), as photo tours do: limiting by device pixels
         // would forbid any zoom on a retina display.
         const css = this.renderer?.domElement.clientHeight || 600;
         const screenPx = css * Math.min(window.devicePixelRatio || 1, 1.25);
-        const minFov = THREE.MathUtils.clamp(screenPx / ((face / 90) * 1.15), 22, 75);
-        return THREE.MathUtils.clamp(fov, minFov, 95);
+        return THREE.MathUtils.clamp(screenPx / ((this.sharpnessInView() / 90) * 1.1), 10, 75);
     }
 
     zoomBy(factor: number): void {
@@ -824,8 +1054,41 @@ export class Room360 implements OnDestroy {
         const pointers = new Map<number, { x: number; y: number }>();
         let pinch = 0;
         let last = 0;
+        let drag: { key: string; dx: number; dy: number } | null = null;
+        const wallPoint = (e: PointerEvent): THREE.Vector3 | null => {
+            if (!this.meta) return null;
+            const rect = el.getBoundingClientRect();
+            const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+            this.raycaster.setFromCamera(ndc, this.camera);
+            const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), this.meta.artWall.distance);
+            return this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+        };
+        const pickPiece = (e: PointerEvent): string | null => {
+            const rect = el.getBoundingClientRect();
+            const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+            this.raycaster.setFromCamera(ndc, this.camera);
+            for (const hit of this.raycaster.intersectObject(this.art, true)) {
+                let o: THREE.Object3D | null = hit.object;
+                while (o && !o.userData['pieceKey']) o = o.parent;
+                if (o) return o.userData['pieceKey'] as string;
+            }
+            return null;
+        };
         const down = (e: PointerEvent) => {
+            if (this.inspecting()) return; // the orbit controls have it
             el.setPointerCapture(e.pointerId);
+            if (pointers.size === 0) {
+                const key = pickPiece(e);
+                const group = key ? this.pieceGroups.get(key) : null;
+                const p = group ? wallPoint(e) : null;
+                if (key && group && p) {
+                    drag = { key, dx: p.x - group.position.x, dy: p.y - group.position.y };
+                    el.style.cursor = 'move';
+                    this.hint.set(false);
+                    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                    return;
+                }
+            }
             pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
             cancelAnimationFrame(this.animation);
             this.velocity = { yaw: 0, pitch: 0 };
@@ -837,14 +1100,33 @@ export class Room360 implements OnDestroy {
             }
         };
         const move = (e: PointerEvent) => {
+            if (this.inspecting()) return;
             const prev = pointers.get(e.pointerId);
             if (!prev) return;
+            if (drag) {
+                const p = wallPoint(e);
+                if (p) this.movePiece(drag.key, p.x - drag.dx, p.y - drag.dy);
+                return;
+            }
             const now = { x: e.clientX, y: e.clientY };
             pointers.set(e.pointerId, now);
             if (pointers.size === 2) {
                 const [a, b] = [...pointers.values()];
                 const d = Math.hypot(a.x - b.x, a.y - b.y);
-                if (pinch > 0) this.fov = this.clampFov(this.fov * (pinch / d));
+                if (pinch > 0) {
+                    const want = this.fov * (pinch / d);
+                    // Pinching in past the panorama's sharpness on an artwork: walk up to it in 3D.
+                    if (want < this.minFov() - 0.5 && pinch < d) {
+                        const mid = { clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 } as PointerEvent;
+                        const key = pickPiece(mid);
+                        if (key) {
+                            pointers.clear();
+                            this.enterInspect(key);
+                            return;
+                        }
+                    }
+                    this.fov = this.clampFov(want);
+                }
                 pinch = d;
                 this.requestFrame();
                 return;
@@ -864,16 +1146,36 @@ export class Room360 implements OnDestroy {
         };
         const up = (e: PointerEvent) => {
             pointers.delete(e.pointerId);
+            if (drag) {
+                drag = null;
+                el.style.cursor = '';
+                return;
+            }
             pinch = 0;
             if (pointers.size === 0 && performance.now() - last < 80) this.coast();
         };
         const wheel = (e: WheelEvent) => {
+            if (this.inspecting()) return;
             e.preventDefault();
             this.hint.set(false);
-            this.fov = this.clampFov(this.fov * Math.exp(e.deltaY * 0.0012));
+            const want = this.fov * Math.exp(e.deltaY * 0.0012);
+            // Zooming in past the panorama's sharpness on an artwork: walk up to it in 3D.
+            if (e.deltaY < 0 && want < this.minFov() - 0.5) {
+                const key = pickPiece(e as unknown as PointerEvent);
+                if (key) {
+                    this.enterInspect(key);
+                    return;
+                }
+            }
+            this.fov = this.clampFov(want);
             this.requestFrame();
         };
-        const dbl = () => this.lookAtArt(true);
+        const dbl = (e: MouseEvent) => {
+            if (this.inspecting()) return;
+            const key = pickPiece(e as PointerEvent);
+            if (key) this.enterInspect(key);
+            else this.lookAtArt(true);
+        };
         el.addEventListener('pointerdown', down);
         el.addEventListener('pointermove', move);
         el.addEventListener('pointerup', up);
@@ -903,6 +1205,302 @@ export class Room360 implements OnDestroy {
         this.animation = requestAnimationFrame(step);
     }
 
+    /** Moves one artwork on the wall: snaps to the others' edges and centres and to the wall centre,
+     *  and stays inside the free part of the wall. */
+    private movePiece(key: string, x: number, y: number): void {
+        const meta = this.meta;
+        const group = this.pieceGroups.get(key);
+        const me = this.dims().find((p) => p.key === key);
+        if (!meta || !group || !me) return;
+        const { outerW: w, outerH: h } = me.d;
+        const others = [...this.pieceGroups.entries()].filter(([k]) => k !== key);
+        const xs: number[] = [0];
+        const ys: number[] = [];
+        for (const [k, g] of others) {
+            const d = this.dims().find((p) => p.key === k)?.d;
+            if (!d) continue;
+            xs.push(g.position.x - d.outerW / 2, g.position.x, g.position.x + d.outerW / 2);
+            ys.push(g.position.y - d.outerH / 2, g.position.y, g.position.y + d.outerH / 2);
+        }
+        const snap = (value: number, half: number, lines: number[]) => {
+            let best = value;
+            let gap = SNAP;
+            for (const line of lines) {
+                for (const edge of [-half, 0, half]) {
+                    const delta = Math.abs(line - (value + edge));
+                    if (delta < gap) {
+                        gap = delta;
+                        best = line - edge;
+                    }
+                }
+            }
+            return best;
+        };
+        const zone = meta.artWall;
+        x = THREE.MathUtils.clamp(snap(x, w / 2, xs), zone.left + w / 2, Math.max(zone.left + w / 2, zone.right - w / 2));
+        y = THREE.MathUtils.clamp(snap(y, h / 2, ys), zone.minBottom + h / 2, Math.max(zone.minBottom + h / 2, zone.maxTop - h / 2));
+        group.position.x = x;
+        group.position.y = y;
+        this.offsets.update((o) => ({ ...o, [key]: { x, y } }));
+        this.requestFrame();
+    }
+
+    // ------------------------------------------------------------------ close-up inspection (true 3D)
+
+    /**
+     * Walks up to one artwork: a free 3D camera orbits it, so its edges, sides, glass and frame and the
+     * texture of the picture can be seen from any angle. The art wall behind it is a real plane carrying the
+     * room's render, projected from the original eye — exact for the wall, so it stays right as you move.
+     */
+    enterInspect(key: string | null): void {
+        const meta = this.meta;
+        const group = key ? this.pieceGroups.get(key) : null;
+        if (!meta || !group || !key) return;
+        // Already up close (e.g. the button pressed again): start over from the room, never stack sessions.
+        if (this.inspecting()) this.exitInspect();
+        cancelAnimationFrame(this.animation);
+        this.inspectKey = key;
+        this.inspecting.set(true);
+        this.hint.set(true);
+        this.buildWallPlane(meta);
+        this.buildPieces(); // swaps in the 4096 px picture and the canvas weave
+
+        const piece = this.dims().find((p) => p.key === key)!.d;
+        const g = this.pieceGroups.get(key)!;
+        const target = new THREE.Vector3(g.position.x, g.position.y, g.position.z + 0.02);
+        const fov = 40;
+        const fill = 0.72;
+        const dist =
+            Math.max(piece.outerH / fill, piece.outerW / (fill * Math.max(0.6, this.camera.aspect))) /
+            2 /
+            Math.tan(THREE.MathUtils.degToRad(fov / 2));
+        // Never start further back than the room allows (in small rooms the wall can be closer than the framing).
+        const F = meta.artWall.distance;
+        const startDist = Math.min(dist, F - 0.3);
+
+        const controls = new OrbitControls(this.camera, this.renderer.domElement);
+        controls.target.copy(target);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.12;
+        controls.rotateSpeed = 0.6;
+        controls.zoomSpeed = 0.9;
+        controls.screenSpacePanning = true;
+        controls.minDistance = 0.05; // nose to the canvas
+        // Close enough that the (true 3D) art wall always fills the view.
+        controls.maxDistance = Math.max(startDist + 0.25, Math.min(F - 0.05, Math.max(1.3, startDist * 1.5)));
+        // Stay in front of the wall (and away from the furniture baked into the wall picture).
+        // Enough to see the frame's edges and depth; further round, the room behind would show its seams.
+        controls.minAzimuthAngle = -THREE.MathUtils.degToRad(40);
+        controls.maxAzimuthAngle = THREE.MathUtils.degToRad(40);
+        controls.minPolarAngle = THREE.MathUtils.degToRad(65);
+        controls.maxPolarAngle = THREE.MathUtils.degToRad(115);
+        const bounds = { x: piece.outerW / 2 + 0.1, y: piece.outerH / 2 + 0.1 };
+        controls.addEventListener('change', () => {
+            // Sliding across the picture stays on the picture.
+            controls.target.x = THREE.MathUtils.clamp(controls.target.x, g.position.x - bounds.x, g.position.x + bounds.x);
+            controls.target.y = THREE.MathUtils.clamp(controls.target.y, g.position.y - bounds.y, g.position.y + bounds.y);
+            controls.target.z = target.z;
+            if (this.gliding) return;
+            // Backing right off returns to the room.
+            if (this.camera.position.distanceTo(controls.target) > controls.maxDistance - 0.05) {
+                queueMicrotask(() => this.exitInspect());
+                return;
+            }
+            this.requestFrame();
+        });
+        controls.addEventListener('start', () => this.hint.set(false));
+        this.controls = controls;
+
+        // Glide from the eye to the artwork.
+        const from = new THREE.Vector3(0, 0, 0);
+        const to = target.clone().add(new THREE.Vector3(0, 0, startDist));
+        const startFov = this.camera.fov;
+        const t0 = performance.now();
+        this.gliding = true;
+        controls.enabled = false;
+        const step = (now: number) => {
+            const t = Math.min(1, (now - t0) / 650);
+            const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+            this.camera.position.lerpVectors(from, to, e);
+            this.camera.fov = startFov + (fov - startFov) * e;
+            this.camera.updateProjectionMatrix();
+            this.camera.lookAt(target);
+            this.sky.position.copy(this.camera.position);
+            this.renderer.render(this.scene, this.camera);
+            if (t < 1) {
+                this.animation = requestAnimationFrame(step);
+                return;
+            }
+            this.gliding = false;
+            controls.enabled = true;
+            controls.update();
+            this.requestFrame();
+        };
+        this.animation = requestAnimationFrame(step);
+    }
+
+    exitInspect(): void {
+        if (!this.inspecting()) return;
+        cancelAnimationFrame(this.animation);
+        this.gliding = false;
+        this.controls?.dispose();
+        this.controls = null;
+        this.inspecting.set(false);
+        this.removeWallPlane();
+        this.camera.position.set(0, 0, 0);
+        this.sky.position.set(0, 0, 0);
+        this.buildPieces();
+        const key = this.inspectKey;
+        const g = key ? this.pieceGroups.get(key) : null;
+        this.inspectKey = null;
+        if (g && this.meta) {
+            // Back at the eye, looking at the artwork, as close as the room's picture stays sharp.
+            this.yaw = Math.atan2(g.position.x, this.meta.artWall.distance);
+            this.pitch = Math.atan2(g.position.y, this.meta.artWall.distance);
+            this.fov = this.clampFov(this.minFov() * 1.15);
+            this.requestFrame();
+            this.lookAtArt(false);
+            return;
+        }
+        this.requestFrame();
+    }
+
+    private removeWallPlane(): void {
+        // Every inspection wall (not just the last one), so nothing from another room can linger.
+        for (const o of this.scene.children.filter((c) => c.name === 'inspect-wall')) {
+            const mesh = o as THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+            this.scene.remove(mesh);
+            mesh.geometry.dispose();
+            mesh.material.dispose();
+        }
+        this.wallPlane = null;
+    }
+
+    /** The art wall as a real plane, textured with the room's render (the sharp detail where there is one). */
+    private buildWallPlane(meta: RoomMeta): void {
+        this.removeWallPlane();
+        const face = this.sky.getObjectByName('f') as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
+        if (!face) return;
+        const detail = this.sky.getObjectByName('detail') as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
+        const F = meta.artWall.distance;
+        const W = meta.room?.width ?? 2 * F;
+        const left = Math.max(-W / 2, -F);
+        const right = Math.min(W / 2, F);
+        const bottom = Math.max(meta.artWall.floor, -F);
+        const top = Math.min(meta.artWall.ceiling, F);
+        const d = meta.detail;
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                faceMap: { value: face.material.uniforms['map'].value },
+                faceMask: { value: face.material.uniforms['mask'].value },
+                detailMap: { value: detail?.material.uniforms['map'].value ?? null },
+                detailMask: { value: detail?.material.uniforms['mask'].value ?? null },
+                detailRect: { value: d && detail ? new THREE.Vector4(d.u0, d.u1, d.v0, d.v1) : new THREE.Vector4(2, 2, 2, 2) },
+                distance: { value: F },
+                roomLight: this.uniforms.roomLight,
+                roomRect: this.uniforms.roomRect,
+                roomLightScale: this.uniforms.roomLightScale,
+                wallBase: { value: new THREE.Vector3(...(meta.wallColour ?? [meta.wallAlbedo, meta.wallAlbedo, meta.wallAlbedo])) },
+                paintable: { value: meta.paintable === false ? 0 : 1 },
+                wallRatio: this.uniforms.wallRatio,
+                roomKnee: this.uniforms.roomKnee,
+            },
+            vertexShader: /* glsl */ `
+                varying vec3 vPos;
+                void main() {
+                    vPos = (modelMatrix * vec4(position, 1.0)).xyz;
+                    gl_Position = projectionMatrix * viewMatrix * vec4(vPos, 1.0);
+                }
+            `,
+            fragmentShader: /* glsl */ `
+                uniform sampler2D faceMap;
+                uniform sampler2D faceMask;
+                uniform sampler2D detailMap;
+                uniform sampler2D detailMask;
+                uniform vec4 detailRect;
+                uniform sampler2D roomLight;
+                uniform vec4 roomRect;
+                uniform float roomLightScale;
+                uniform vec3 wallBase;
+                uniform float paintable;
+                uniform float distance;
+                uniform vec3 wallRatio;
+                varying vec3 vPos;
+                ${TONE_GLSL}
+                void main() {
+                    // Where the original eye saw this point of the wall.
+                    vec2 uv = (vPos.xy / distance + 1.0) * 0.5;
+                    vec3 c;
+                    float m;
+                    if (uv.x > detailRect.x && uv.x < detailRect.y && uv.y > detailRect.z && uv.y < detailRect.w) {
+                        vec2 d = (uv - detailRect.xz) / (detailRect.yw - detailRect.xz);
+                        c = texture2D(detailMap, d).rgb;
+                        m = texture2D(detailMask, d).r;
+                    } else {
+                        c = texture2D(faceMap, uv).rgb;
+                        m = texture2D(faceMask, uv).r;
+                    }
+                    vec3 lin = r360ToneInverse(r360SrgbToLinear(c));
+                    lin = mix(lin, lin * wallRatio, m);
+                    if (paintable > 0.5) {
+                        vec2 ruv = clamp(vec2((vPos.x - roomRect.x) / (roomRect.y - roomRect.x), (vPos.y - roomRect.z) / (roomRect.w - roomRect.z)), 0.0, 1.0);
+                        vec3 plain = r360SrgbToLinear(texture2D(roomLight, ruv).rgb) * roomLightScale * wallBase * wallRatio;
+                        lin = mix(plain, lin, smoothstep(0.35, 0.9, m));
+                    }
+                    gl_FragColor = vec4(r360LinearToSrgb(r360Tone(lin)), 1.0);
+                }
+            `,
+        });
+        const plane = new THREE.Mesh(new THREE.PlaneGeometry(right - left, top - bottom), material);
+        plane.position.set((left + right) / 2, (bottom + top) / 2, -F);
+        plane.renderOrder = -5;
+        plane.name = 'inspect-wall';
+        this.wallPlane = plane;
+        this.scene.add(plane);
+    }
+
+    /** A fine canvas weave in the light, so the picture's surface reads as canvas up close. */
+    private addCanvasWeave(group: THREE.Group): void {
+        this.weave ??= weaveNormalMap();
+        group.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (!mesh.isMesh) return;
+            for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+                const std = m as THREE.MeshStandardMaterial;
+                if (!std.isMeshStandardMaterial || !std.map || std.normalMap) continue;
+                const t = this.weave!.clone();
+                // About 18 threads per centimetre over the picture.
+                const geo = mesh.geometry as THREE.BufferGeometry;
+                geo.computeBoundingBox();
+                const size = geo.boundingBox!.getSize(new THREE.Vector3());
+                t.repeat.set(Math.max(1, size.x / 0.012), Math.max(1, size.y / 0.012));
+                t.needsUpdate = true;
+                std.normalMap = t;
+                std.normalScale = new THREE.Vector2(0.35, 0.35);
+                std.needsUpdate = true;
+                this.pieceTextures.push(t);
+            }
+        });
+    }
+
+    /** Exports the artwork(s) — not the room — as a GLB for the AR viewer, centred on the arrangement. */
+    private async openAr(): Promise<void> {
+        this.arOpen.set(true);
+        const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
+        const groups = [...this.pieceGroups.values()];
+        if (!groups.length) return;
+        const cx = groups.reduce((s, g) => s + g.position.x, 0) / groups.length;
+        const cy = groups.reduce((s, g) => s + g.position.y, 0) / groups.length;
+        const root = new THREE.Group();
+        for (const g of groups) {
+            const copy = g.clone(true);
+            copy.position.set(g.position.x - cx, g.position.y - cy, 0);
+            root.add(copy);
+        }
+        const glb = (await new GLTFExporter().parseAsync(root, { binary: true, onlyVisible: true, maxTextureSize: 2048 })) as ArrayBuffer;
+        this.arModel.set(new Blob([glb], { type: 'model/gltf-binary' }));
+    }
+
     // ------------------------------------------------------------------ drawing
 
     private requestFrame(): void {
@@ -915,7 +1513,21 @@ export class Room360 implements OnDestroy {
 
     private draw(): void {
         if (!this.renderer || this.destroyed) return;
+        if (this.inspecting() && this.controls) {
+            if (this.gliding) return; // the glide draws its own frames
+            this.controls.update();
+            // The panorama stays "at infinity" around the moving camera; the art wall itself is real geometry.
+            this.sky.position.copy(this.camera.position);
+            this.renderer.render(this.scene, this.camera);
+            return;
+        }
+        this.sky.position.set(0, 0, 0);
         this.pitch = THREE.MathUtils.clamp(this.pitch, -1.45, 1.45);
+        const min = this.minFov();
+        if (this.fov < min - 0.05) {
+            this.fov += (min - this.fov) * 0.25;
+            this.requestFrame();
+        }
         this.camera.fov = this.fov;
         this.camera.updateProjectionMatrix();
         this.camera.rotation.set(0, 0, 0);
@@ -923,6 +1535,19 @@ export class Room360 implements OnDestroy {
         this.camera.rotation.y = -this.yaw;
         this.camera.rotation.x = this.pitch;
         this.renderer.render(this.scene, this.camera);
+    }
+
+    /** New colour ÷ the colour the wall was rendered or photographed in ("original" = unchanged). */
+    private updateWallRatio(): void {
+        const meta = this.meta;
+        const wall = this.wall();
+        if (wall === 'original' || !meta) {
+            this.uniforms.wallRatio.value.set(1, 1, 1);
+            return;
+        }
+        const c = hexToLinear(wall);
+        const base = meta.wallColour ?? [meta.wallAlbedo, meta.wallAlbedo, meta.wallAlbedo];
+        this.uniforms.wallRatio.value.set(c.x / base[0], c.y / base[1], c.z / base[2]);
     }
 
     protected sameColour(hex: string): boolean {
@@ -1021,6 +1646,10 @@ export class Room360 implements OnDestroy {
         }
         this.uniforms.roomLight.value?.dispose();
         clearTimeout(this.envTimer);
+        this.controls?.dispose();
+        this.wallPlane?.geometry.dispose();
+        this.wallPlane?.material.dispose();
+        this.weave?.dispose();
         this.envTarget?.dispose();
         this.pieceTextures.forEach((t) => t.dispose());
         this.textures.forEach((t) => t.dispose());

@@ -56,3 +56,21 @@ on 4 CPU cores). For sharper rooms render at 1536 px / 32 samples (about an hour
     docker compose --profile render run --rm --entrypoint /opt/blender/4.2/python/bin/python3.11 \
         -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt render docker/render/fetch_assets.py
     docker compose --profile render run --rm render --python docker/render/rooms.py -- --room all --size 1536 --samples 32
+
+## Real photographed rooms (`rooms/photo-*`)
+
+360° photographs from [Poly Haven](https://polyhaven.com/hdris) (CC0), tonemapped 8K JPG, cut into the viewer's cube
+faces by `docker/render/photo_rooms.py`:
+
+| Room | Poly Haven photo |
+|---|---|
+| Reading room | `reading_room` — https://polyhaven.com/a/reading_room |
+| Sea-view suite | `relax_inn_seaview_suite` — https://polyhaven.com/a/relax_inn_seaview_suite |
+| Sunny apartment | `lebombo` — https://polyhaven.com/a/lebombo |
+
+Each room's art wall was measured from the photo (squared up, then scaled from doors, sockets, desks and cornices),
+see `PHOTO_ROOMS` in the script. Existing pictures on that wall are painted out, and the wall can be repainted (its
+own colour is measured, so a new colour keeps the photo's light and shade). To add a room, put an equirectangular
+360° photo in `docker/render/assets/photo/`, measure it with `--contact` / `--calib`, add it to `PHOTO_ROOMS` and run:
+
+    docker compose --profile render run --rm render --python docker/render/photo_rooms.py -- --room all
