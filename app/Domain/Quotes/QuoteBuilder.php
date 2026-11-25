@@ -309,7 +309,8 @@ class QuoteBuilder
     {
         $parts = [
             $line->source_type->getLabel(),
-            $line->sizeLabel().($line->size_reference->value === 'outer' ? ' (outer)' : ''),
+            $line->printSizeLabel().($line->size_reference->value === 'outer' ? ' (outer)' : ''),
+            $line->rotationLabel(),
             $line->medium?->name,
             $line->substrate?->name,
             $line->frame ? "Frame: {$line->frame->name}" : ($line->frame_advice_requested ? 'Frame: to be advised' : 'No frame'),

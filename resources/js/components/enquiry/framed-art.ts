@@ -46,6 +46,11 @@ export class FramedArt {
     readonly frame = input<PreviewFrame | null>(null);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
+    /**
+     * Width and height swapped (any quarter turn): widthMm/heightMm are already the swapped size, and the
+     * upright picture is stretched to fill it — never turned or cropped.
+     */
+    readonly rotation = input(0);
     /** pixels per millimetre */
     readonly scale = input.required<number>();
     protected readonly ImageIcon = ImageIcon;
@@ -147,14 +152,19 @@ export class FramedArt {
             : { display: 'block' };
     });
 
+    /** Clockwise quarter turns, normalised to 0..3. */
+    private turns = computed(() => ((Math.round((this.rotation() || 0) / 90) % 4) + 4) % 4);
+
     protected imageStyle = computed(() => {
         const url = this.imageUrl();
         const mat = this.mat();
+        // Rotate only swaps the piece's width and height: the picture stays upright and is stretched to fill.
+        const fill = this.turns() > 0 ? '100% 100%' : 'cover';
         return {
             display: 'block',
             width: this.px(this.widthMm(), 4),
             height: this.px(this.heightMm(), 4),
-            background: url ? `#ddd url("${url}") center / cover no-repeat` : SAMPLE_GRADIENT,
+            background: url ? `#ddd url("${url}") center / ${fill} no-repeat` : SAMPLE_GRADIENT,
             'box-shadow': mat ? `0 0 0 ${this.px(2, 1)} ${mat.core_colour}` : null,
         };
     });

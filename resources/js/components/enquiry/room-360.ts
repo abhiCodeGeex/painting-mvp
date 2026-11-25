@@ -8,11 +8,30 @@ import {
     ElementRef,
     input,
     OnDestroy,
+    output,
     signal,
     untracked,
     viewChild,
 } from '@angular/core';
-import { ArrowLeft, Box, Camera, Download, Expand, Eye, LoaderCircle, Minimize, RotateCcw, ScanSearch, Smartphone, ZoomIn, ZoomOut } from 'lucide';
+import {
+    ArrowLeft,
+    Box,
+    Camera,
+    Check,
+    Download,
+    Expand,
+    Eye,
+    LoaderCircle,
+    Minimize,
+    Plus,
+    RotateCcw,
+    ScanSearch,
+    Smartphone,
+    Sofa,
+    X,
+    ZoomIn,
+    ZoomOut,
+} from 'lucide';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { ArView } from './ar-view';
@@ -58,6 +77,71 @@ interface RoomMeta {
     credit?: string;
     /** Sharper render of the art wall, laid over the forward face (texture coordinates of that face). */
     detail?: { file: string; mask: string; size: number; u0: number; u1: number; v0: number; v1: number };
+    /** Furniture the customer can take out or add: an empty render of the room plus one RGBA layer per item. */
+    layers?: RoomLayers;
+}
+
+/** An item's picture on one face: RGBA covering `rect` = [u0, v0, u1, v1] of that face (same UVs as `detail`). */
+interface LayerPatch {
+    file: string;
+    rect: [number, number, number, number];
+    /**
+     * Grayscale coverage of the object itself (no shadow), same rect and size. Where the layer is the wall in
+     * the item's shadow (wall mask × (1 − obj)), it takes the customer's wall colour too. Without it the layer
+     * is never repainted.
+     */
+    obj?: string;
+}
+
+interface RoomItem {
+    key: string;
+    label: string;
+    /** In the room as designed (shown in the full render); extras are false. */
+    default?: boolean;
+    faces: Partial<Record<string, LayerPatch>>;
+    /** Sharper patch for the art-wall detail (its rect is in the forward face's UVs, like `detail`). */
+    detail?: LayerPatch;
+}
+
+interface RoomLayers {
+    /**
+     * File patterns of the empty room; `<face>` is replaced by f/r/b/l/u/d (plus `-sm` 512 px versions). Only the
+     * faces in `facesList` (all, if absent) and the detail if `hasDetail` have an empty render: elsewhere the
+     * empty room looks exactly like the render as designed, whose textures are used there.
+     */
+    empty: {
+        faces: string;
+        mask: string;
+        detail?: string;
+        detailMask?: string;
+        facesList?: string[];
+        hasDetail?: boolean;
+        /** Layers rendered without the art-wall detail: hide the detail while the furniture differs from the design. */
+        detailSkipped?: boolean;
+    };
+    items: RoomItem[];
+}
+
+/** A pair of textures for one face (or the detail patch): the colour render and the mask of the painted walls. */
+interface BaseTex {
+    map: THREE.Texture;
+    mask: THREE.Texture;
+}
+
+/** One furniture layer as the shaders see it: texture + rect [u0, v0, u1, v1] in face UVs (+ object mask). */
+interface LayerTex {
+    map: THREE.Texture;
+    rect: THREE.Vector4;
+    obj?: THREE.Texture;
+}
+
+interface ToolButton {
+    label: string;
+    icon: typeof Eye;
+    run: () => void;
+    id?: string;
+    /** For a button that opens a panel: whether it is open. */
+    expanded?: boolean;
 }
 
 interface PieceDims {
@@ -76,6 +160,65 @@ const SKY_RADIUS = 50;
 const GAP = 0.08;
 const SNAP = 0.04;
 const ROOM_KEY = 'room-360-style';
+const NO_LAYERS: LayerTex[] = [];
+
+/** Texture units a layer needs (its picture, plus its object mask when it has one). */
+const layerCost = (l: LayerTex) => (l.obj ? 2 : 1);
+
+/** The layers that fit in `units` texture units, in drawing order (the rest are left out). */
+function fitLayers(layers: LayerTex[], units: number): LayerTex[] {
+    const out: LayerTex[] = [];
+    let used = 0;
+    for (const l of layers) {
+        if (used + layerCost(l) > units) break;
+        used += layerCost(l);
+        out.push(l);
+    }
+    return out;
+}
+
+/**
+ * GLSL that lays furniture layers over the repainted room, in linear light: `<prefix>Over(lin, faceUv, wallMask)`.
+ * The layers are premultiplied on upload (clean mip-mapped edges); un-premultiplied here, decoded like the
+ * panorama (sRGB → linear → inverse tone) and blended by coverage. The object itself is never wall-painted;
+ * with an object mask, the wall inside the layer (the item's shadow) is: × wall colour where wallMask × (1 − obj).
+ * Needs TONE_GLSL and `uniform vec3 wallRatio` before it.
+ */
+function layerGlsl(prefix: string, layers: LayerTex[]): string {
+    let decl = '';
+    let body = '';
+    layers.forEach((l, i) => {
+        decl += `uniform sampler2D ${prefix}Map${i};
+uniform vec4 ${prefix}Rect${i};
+${l.obj ? `uniform sampler2D ${prefix}Obj${i};` : ''}
+`;
+        body += `
+        {
+            vec4 r = ${prefix}Rect${i};
+            vec2 q = (uv - r.xy) / (r.zw - r.xy);
+            float inside = step(0.0, q.x) * step(q.x, 1.0) * step(0.0, q.y) * step(q.y, 1.0);
+            vec2 cq = clamp(q, 0.0, 1.0);
+            vec4 s = texture2D(${prefix}Map${i}, cq, -0.6);
+            vec3 item = r360ToneInverse(r360SrgbToLinear(s.rgb / max(s.a, 1e-3)));
+            ${l.obj ? `item *= mix(vec3(1.0), wallRatio, wallMask * (1.0 - texture2D(${prefix}Obj${i}, cq, -0.6).r));` : ''}
+            lin = mix(lin, item, s.a * inside);
+        }`;
+    });
+    return `${decl}vec3 ${prefix}Over(vec3 lin, vec2 uv, float wallMask) {${body}
+    return lin;
+}
+`;
+}
+
+function layerUniforms(prefix: string, layers: LayerTex[]): Record<string, THREE.IUniform> {
+    const u: Record<string, THREE.IUniform> = {};
+    layers.forEach((l, i) => {
+        u[`${prefix}Map${i}`] = { value: l.map };
+        u[`${prefix}Rect${i}`] = { value: l.rect };
+        if (l.obj) u[`${prefix}Obj${i}`] = { value: l.obj };
+    });
+    return u;
+}
 
 function dimsOf(p: WallPiece): PieceDims {
     const picW = M(Math.max(50, p.widthMm || 0));
@@ -245,7 +388,7 @@ function weaveNormalMap(): THREE.Texture {
                                     (sameColour(c.hex) ? 'scale-110 border-white ring-2 ring-white/70' : 'border-white/40')
                                 "
                                 [style.background]="c.hex"
-                                (click)="wall.set(c.hex)"
+                                (click)="pickWall(c.hex)"
                             ></button>
                         }
                     </div>
@@ -261,7 +404,13 @@ function weaveNormalMap(): THREE.Texture {
                             type="button"
                             [title]="b.label"
                             [attr.aria-label]="b.label"
-                            class="rounded-full p-1.5 text-white hover:bg-white/15"
+                            [attr.aria-expanded]="b.expanded ?? null"
+                            [attr.aria-haspopup]="b.expanded === undefined ? null : 'dialog'"
+                            [attr.data-room-tool]="b.id ?? null"
+                            [class]="
+                                'rounded-full p-1.5 text-white transition outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white/80 ' +
+                                (b.expanded ? 'bg-white/20' : '')
+                            "
                             (click)="b.run()"
                         >
                             <svg [icon]="b.icon" class="size-4" />
@@ -270,12 +419,84 @@ function weaveNormalMap(): THREE.Texture {
                 </div>
             </div>
 
+            @if (furnitureOpen() && items().length) {
+                <div
+                    #furniturePanel
+                    role="dialog"
+                    aria-label="Furniture"
+                    class="absolute right-2 bottom-14 z-20 w-[min(18rem,calc(100%-1rem))] rounded-xl bg-neutral-900/85 p-3 text-white shadow-xl ring-1 ring-white/10 backdrop-blur-md"
+                >
+                    <div class="mb-2 flex items-center gap-2">
+                        <svg [icon]="Sofa" class="size-4 text-white/80" />
+                        <span class="text-sm font-medium">Furniture</span>
+                        @if (furnitureBusy()) {
+                            <svg [icon]="LoaderCircle" class="size-3.5 animate-spin text-white/70" aria-label="Loading" />
+                        }
+                        <button
+                            type="button"
+                            aria-label="Close furniture"
+                            class="ml-auto rounded-full p-1 text-white/70 outline-none hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:ring-white/80"
+                            (click)="closeFurniture(true)"
+                        >
+                            <svg [icon]="X" class="size-3.5" />
+                        </button>
+                    </div>
+                    @for (group of itemGroups(); track group.title) {
+                        <div class="mb-1 text-[10px] font-semibold tracking-wider text-white/55 uppercase">{{ group.title }}</div>
+                        <div class="mb-2.5 flex flex-wrap gap-1.5">
+                            @for (item of group.items; track item.key) {
+                                @let on = !!furniture()[item.key];
+                                <button
+                                    type="button"
+                                    [attr.aria-pressed]="on"
+                                    [title]="(on ? 'Take out: ' : item.default ? 'Put back: ' : 'Add: ') + item.label"
+                                    [class]="
+                                        'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-white/80 ' +
+                                        (on
+                                            ? 'border-white bg-white text-neutral-900 hover:bg-white/90'
+                                            : 'border-white/30 text-white/75 hover:border-white/60 hover:text-white')
+                                    "
+                                    (click)="toggleItem(item.key)"
+                                >
+                                    @if (loadingItems().includes(item.key)) {
+                                        <svg [icon]="LoaderCircle" class="size-3 animate-spin" />
+                                    } @else {
+                                        <svg [icon]="on ? Check : Plus" class="size-3" />
+                                    }
+                                    <span [class]="!on && item.default ? 'line-through decoration-white/40' : ''">{{ item.label }}</span>
+                                </button>
+                            }
+                        </div>
+                    }
+                    <div class="flex gap-1.5 border-t border-white/10 pt-2.5">
+                        <button
+                            type="button"
+                            [attr.aria-pressed]="isEmptyRoom()"
+                            class="flex-1 rounded-md bg-white/10 px-2 py-1.5 text-xs font-medium outline-none hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/80 disabled:opacity-40"
+                            [disabled]="isEmptyRoom()"
+                            (click)="emptyRoom()"
+                        >
+                            Empty room
+                        </button>
+                        <button
+                            type="button"
+                            [attr.aria-pressed]="!customised()"
+                            class="flex-1 rounded-md bg-white/10 px-2 py-1.5 text-xs font-medium outline-none hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/80 disabled:opacity-40"
+                            [disabled]="!customised()"
+                            (click)="asDesigned()"
+                        >
+                            As designed
+                        </button>
+                    </div>
+                </div>
+            }
+
             <div
                 class="pointer-events-none absolute bottom-14 left-1/2 hidden max-w-[80%] -translate-x-1/2 truncate rounded-full bg-black/40 px-2.5 py-1 text-[11px] text-white/80 transition-opacity sm:block"
                 [style.opacity]="hint() ? 1 : 0"
             >
                 @if (inspecting()) {
-                    Drag to walk round · scroll to move closer · right-drag to slide
+                    Scroll to zoom where you point · drag to slide across · right-drag to tilt round the frame
                 } @else {
                     Drag to look around · drag the artwork to move it · zoom in to inspect
                 }
@@ -297,6 +518,8 @@ function weaveNormalMap(): THREE.Texture {
 export class Room360 implements OnDestroy {
     readonly pieces = input.required<WallPiece[]>();
     readonly wallColour = input.required<string>();
+    /** The visitor picked a wall colour on the swatches. */
+    readonly wallChange = output<string>();
     readonly height = input('h-[420px]');
 
     protected readonly LoaderCircle = LoaderCircle;
@@ -320,6 +543,43 @@ export class Room360 implements OnDestroy {
     protected inspecting = signal(false);
     protected readonly ArrowLeft = ArrowLeft;
     protected readonly Camera = Camera;
+    protected readonly Sofa = Sofa;
+    protected readonly Check = Check;
+    protected readonly Plus = Plus;
+    protected readonly X = X;
+
+    // ---- furniture (rooms whose meta has `layers`)
+    /** The room's optional furniture, in drawing order. */
+    protected items = signal<RoomItem[]>([]);
+    /** Which items are in the room, by key (starts as designed: each item's `default`). */
+    protected furniture = signal<Record<string, boolean>>({});
+    protected furnitureOpen = signal(false);
+    /** Items whose layers are still downloading (a spinner on their chip). */
+    protected loadingItems = signal<string[]>([]);
+    protected furnitureBusy = signal(false);
+    /** Anything differs from the room as designed → the empty render with the chosen items laid over it. */
+    protected customised = computed(() => this.items().some((i) => !!this.furniture()[i.key] !== !!i.default));
+    protected isEmptyRoom = computed(() => this.items().every((i) => !this.furniture()[i.key]));
+    protected itemGroups = computed(() =>
+        [
+            { title: 'In the room', items: this.items().filter((i) => i.default) },
+            { title: 'Add', items: this.items().filter((i) => !i.default) },
+        ].filter((g) => g.items.length),
+    );
+    private furniturePanel = viewChild<ElementRef<HTMLDivElement>>('furniturePanel');
+    /** The textures of the room as designed and of the empty room, by face (and 'detail'). */
+    private bases = { designed: new Map<string, BaseTex>(), empty: new Map<string, BaseTex>() };
+    private baseMode: 'designed' | 'empty' = 'designed';
+    private emptyLoad: Promise<void> | null = null;
+    /** The faces (and 'detail') that have an empty render; the others look the same either way. */
+    private emptySlots = new Set<string>();
+    private emptyReady = false;
+    /** Furniture layer textures of the current room, by file. */
+    private layerLoads = new Map<string, Promise<THREE.Texture>>();
+    private layerTextures = new Map<string, THREE.Texture>();
+    /** The furniture actually on screen (the panel reverts to it if a layer cannot be loaded). */
+    private appliedFurniture: Record<string, boolean> = {};
+    private furnitureToken = 0;
     private inspectKey: string | null = null;
     /** True while the camera glides to the artwork (the orbit controls wait until it has arrived). */
     private gliding = false;
@@ -378,12 +638,23 @@ export class Room360 implements OnDestroy {
 
     private dims = computed(() => this.pieces().map((p) => ({ piece: p, key: String(p.id), d: dimsOf(p) })));
 
-    protected buttons = computed(() => [
+    protected buttons = computed((): ToolButton[] => [
+        ...(this.items().length
+            ? [
+                  {
+                      id: 'furniture',
+                      label: this.customised() ? 'Furniture (changed)' : 'Furniture',
+                      icon: Sofa,
+                      expanded: this.furnitureOpen(),
+                      run: () => this.toggleFurniturePanel(),
+                  },
+              ]
+            : []),
         { label: 'Look at the artwork', icon: Eye, run: () => (this.inspecting() ? this.exitInspect() : this.lookAtArt(true)) },
-        { label: 'Inspect up close in 3D', icon: ScanSearch, run: () => this.enterInspect(this.pieceGroups.keys().next().value ?? null) },
+        { label: 'Inspect up close in 3D', icon: ScanSearch, run: () => this.enterInspect(this.inspectKey ?? this.pieceInView()) },
         { label: 'Zoom in', icon: ZoomIn, run: () => this.zoomBy(0.8) },
         { label: 'Zoom out', icon: ZoomOut, run: () => this.zoomBy(1.25) },
-        { label: 'Reset view', icon: RotateCcw, run: () => this.lookAtArt(false) },
+        { label: 'Reset view', icon: RotateCcw, run: () => this.resetView() },
         { label: 'Save 4K picture', icon: Download, run: () => this.saveImage() },
         { label: 'View on your wall (AR)', icon: Box, run: () => void this.openAr() },
         ...(this.canGyro
@@ -430,20 +701,20 @@ export class Room360 implements OnDestroy {
             this.updateWallRatio();
             this.requestFrame();
             // Glass and metal frames reflect the repainted room too (rebuilt once the colour settles).
-            clearTimeout(this.envTimer);
-            this.envTimer = window.setTimeout(() => {
-                if (!this.meta || this.destroyed) return;
-                this.buildEnvironment();
-                this.art.traverse((o) => {
-                    const mesh = o as THREE.Mesh;
-                    if (!mesh.isMesh) return;
-                    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-                        const std = m as THREE.MeshStandardMaterial;
-                        if (std.envMap) std.envMap = this.envMap;
-                    }
-                });
-                this.requestFrame();
-            }, 250);
+            this.scheduleEnvironment();
+        });
+
+        // Furniture switched → the empty room plus the chosen items, or the full render as designed.
+        effect(() => {
+            this.furniture();
+            this.items();
+            untracked(() => void this.syncFurniture());
+        });
+
+        // Focus the panel's first switch when it opens (keyboard users land in it).
+        effect(() => {
+            const panel = this.furniturePanel()?.nativeElement;
+            if (panel) untracked(() => panel.querySelector<HTMLButtonElement>('button[aria-pressed]')?.focus({ preventScroll: true }));
         });
 
         // Artwork changes → rebuild the pieces.
@@ -458,6 +729,24 @@ export class Room360 implements OnDestroy {
                 if (this.meta) this.buildPieces();
             });
         });
+    }
+
+    /** Rebuilds the reflections once the room's look settles (wall colour, furniture). */
+    private scheduleEnvironment(): void {
+        clearTimeout(this.envTimer);
+        this.envTimer = window.setTimeout(() => {
+            if (!this.meta || this.destroyed) return;
+            this.buildEnvironment();
+            this.art.traverse((o) => {
+                const mesh = o as THREE.Mesh;
+                if (!mesh.isMesh) return;
+                for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+                    const std = m as THREE.MeshStandardMaterial;
+                    if (std.envMap) std.envMap = this.envMap;
+                }
+            });
+            this.requestFrame();
+        }, 250);
     }
 
     // ------------------------------------------------------------------ setup
@@ -505,6 +794,17 @@ export class Room360 implements OnDestroy {
         };
         document.addEventListener('fullscreenchange', onFs);
         this.cleanup.push(() => document.removeEventListener('fullscreenchange', onFs));
+
+        // Esc closes the furniture panel first, wherever the focus is — caught before it reaches the page (which
+        // would otherwise close the dialog the viewer sits in). From inside the panel, focus returns to its button.
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape' || !this.furnitureOpen()) return;
+            e.stopPropagation();
+            e.preventDefault();
+            this.closeFurniture(!!this.furniturePanel()?.nativeElement.contains(e.target as Node));
+        };
+        window.addEventListener('keydown', onKey, true);
+        this.cleanup.push(() => window.removeEventListener('keydown', onKey, true));
     }
 
     private async loadIndex(): Promise<void> {
@@ -540,7 +840,7 @@ export class Room360 implements OnDestroy {
 
     // ------------------------------------------------------------------ loading
 
-    private loadTexture(url: string, colour: boolean): Promise<THREE.Texture> {
+    private loadTexture(url: string, colour: boolean, premultiply = false): Promise<THREE.Texture> {
         return new Promise((resolve, reject) => {
             new THREE.TextureLoader().load(
                 url,
@@ -552,6 +852,7 @@ export class Room360 implements OnDestroy {
                     t.magFilter = THREE.LinearFilter;
                     t.anisotropy = colour ? Math.min(8, this.renderer.capabilities.getMaxAnisotropy()) : 1;
                     t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+                    t.premultiplyAlpha = premultiply;
                     resolve(t);
                 },
                 undefined,
@@ -593,10 +894,15 @@ export class Room360 implements OnDestroy {
             this.uniforms.roomKnee.value = meta.knee;
             this.updateWallRatio();
 
-            this.buildSky(meta, (f) => {
-                const i = FACE_ORDER.indexOf(f);
-                return { map: small[2 * i], mask: small[2 * i + 1] };
-            });
+            this.disposeRoomTextures();
+            this.emptySlots = this.emptySlotsOf(meta);
+            FACE_ORDER.forEach((f, i) => this.bases.designed.set(f, { map: small[2 * i], mask: small[2 * i + 1] }));
+            this.buildSky(meta);
+            // A new room opens as designed (no extra downloads until the customer changes its furniture).
+            const items = meta.layers?.items ?? [];
+            this.items.set(items);
+            this.furniture.set(this.defaultFurniture());
+            if (!items.length) this.furnitureOpen.set(false);
             this.buildEnvironment();
             this.buildPieces();
             this.offsets.set({});
@@ -623,7 +929,7 @@ export class Room360 implements OnDestroy {
                     mask.dispose();
                     return;
                 }
-                this.swapFace(f, map, mask);
+                this.setBase('designed', f, { map, mask });
             }
             if (meta.detail) {
                 const [map, mask] = await Promise.all([
@@ -637,9 +943,9 @@ export class Room360 implements OnDestroy {
                 }
                 this.renderer.initTexture(map);
                 this.renderer.initTexture(mask);
-                this.addDetail(meta, map, mask);
+                this.setBase('designed', 'detail', { map, mask });
             }
-            if (token === this.loadToken) this.loadingHd.set(false);
+            if (token === this.loadToken && !this.emptyLoad) this.loadingHd.set(false);
             this.loadedRoom = key;
         } catch {
             if (token !== this.loadToken) return;
@@ -664,13 +970,27 @@ export class Room360 implements OnDestroy {
 
     // ------------------------------------------------------------------ panorama
 
-    private skyMaterial(map: THREE.Texture, mask: THREE.Texture, linearOut = false): THREE.ShaderMaterial {
+    /**
+     * One face of the panorama (or the art-wall detail): the render, its walls repainted, then any furniture
+     * layers over it. `faceRect` maps this mesh's UVs onto its face's (u0, u1, v0, v1), where layers live.
+     */
+    private skyMaterial(
+        map: THREE.Texture,
+        mask: THREE.Texture,
+        linearOut = false,
+        layers: LayerTex[] = NO_LAYERS,
+        faceRect = new THREE.Vector4(0, 1, 0, 1),
+    ): THREE.ShaderMaterial {
+        // Map + mask, then as many layers as the GPU's texture units hold (16 at least: 7 with object masks).
+        const fitted = fitLayers(layers, this.textureUnits() - 2);
         return new THREE.ShaderMaterial({
             uniforms: {
                 map: { value: map },
                 mask: { value: mask },
+                faceRect: { value: faceRect },
                 wallRatio: this.uniforms.wallRatio,
                 roomKnee: this.uniforms.roomKnee,
+                ...layerUniforms('item', fitted),
             },
             vertexShader: /* glsl */ `
                 varying vec2 vUv;
@@ -682,9 +1002,11 @@ export class Room360 implements OnDestroy {
             fragmentShader: /* glsl */ `
                 uniform sampler2D map;
                 uniform sampler2D mask;
+                uniform vec4 faceRect;
                 uniform vec3 wallRatio;
                 varying vec2 vUv;
                 ${TONE_GLSL}
+                ${layerGlsl('item', fitted)}
                 void main() {
                     // Crisp, like a photo viewer: the mip level is biased one notch finer (trilinear
                     // filtering otherwise blends in the half-size level and softens the whole room), and
@@ -697,6 +1019,7 @@ export class Room360 implements OnDestroy {
                     vec3 lin = r360ToneInverse(r360SrgbToLinear(c));
                     float m = texture2D(mask, vUv).r;
                     lin = mix(lin, lin * wallRatio, m);
+                    lin = itemOver(lin, vec2(mix(faceRect.x, faceRect.y, vUv.x), mix(faceRect.z, faceRect.w, vUv.y)), m);
                     ${linearOut ? 'gl_FragColor = vec4(lin, 1.0);' : 'gl_FragColor = vec4(r360LinearToSrgb(r360Tone(lin)), 1.0);'}
                 }
             `,
@@ -706,25 +1029,14 @@ export class Room360 implements OnDestroy {
         });
     }
 
-    private buildSky(meta: RoomMeta, textures: (face: string) => { map: THREE.Texture; mask: THREE.Texture }): void {
+    private buildSky(meta: RoomMeta): void {
         for (const child of [...this.sky.children]) {
             this.sky.remove(child);
             const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
             mesh.geometry.dispose();
-            mesh.material.uniforms['map'].value?.dispose();
-            mesh.material.uniforms['mask'].value?.dispose();
-            mesh.material.dispose();
+            mesh.material.dispose(); // the textures belong to this.bases (freed with the room)
         }
-        for (const f of FACE_ORDER) {
-            const info = meta.faces[f];
-            const dir = new THREE.Vector3(...info.dir);
-            const up = new THREE.Vector3(...info.up);
-            const right = new THREE.Vector3().crossVectors(dir, up);
-            const c = dir.clone().multiplyScalar(SKY_RADIUS);
-            const r = right.clone().multiplyScalar(SKY_RADIUS);
-            const u = up.clone().multiplyScalar(SKY_RADIUS);
-            // Corners: bottom-left, bottom-right, top-right, top-left (uv 0,0 → 1,1), facing the eye.
-            const corners = [c.clone().sub(r).sub(u), c.clone().add(r).sub(u), c.clone().add(r).add(u), c.clone().sub(r).add(u)];
+        const quad = (corners: THREE.Vector3[]) => {
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute(
                 'position',
@@ -735,61 +1047,334 @@ export class Room360 implements OnDestroy {
             );
             geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
             geometry.setIndex([0, 1, 2, 0, 2, 3]);
-            const { map, mask } = textures(f);
-            const mesh = new THREE.Mesh(geometry, this.skyMaterial(map, mask));
+            return geometry;
+        };
+        for (const f of FACE_ORDER) {
+            const info = meta.faces[f];
+            const dir = new THREE.Vector3(...info.dir);
+            const up = new THREE.Vector3(...info.up);
+            const right = new THREE.Vector3().crossVectors(dir, up);
+            const c = dir.clone().multiplyScalar(SKY_RADIUS);
+            const r = right.clone().multiplyScalar(SKY_RADIUS);
+            const u = up.clone().multiplyScalar(SKY_RADIUS);
+            // Corners: bottom-left, bottom-right, top-right, top-left (uv 0,0 → 1,1), facing the eye.
+            const corners = [c.clone().sub(r).sub(u), c.clone().add(r).sub(u), c.clone().add(r).add(u), c.clone().sub(r).add(u)];
+            const mesh = new THREE.Mesh(quad(corners), this.materialFor(f) ?? this.skyMaterial(this.placeholder, this.placeholder));
             mesh.name = f;
             mesh.renderOrder = -10;
             mesh.frustumCulled = false;
             this.sky.add(mesh);
         }
+        // The sharper art-wall render, exactly over its part of the forward face (shown once it has loaded).
+        const d = meta.detail;
+        if (d) {
+            const info = meta.faces['f'];
+            const dir = new THREE.Vector3(...info.dir);
+            const up = new THREE.Vector3(...info.up);
+            const right = new THREE.Vector3().crossVectors(dir, up);
+            const at = (u: number, v: number) =>
+                dir
+                    .clone()
+                    .add(right.clone().multiplyScalar(2 * u - 1))
+                    .add(up.clone().multiplyScalar(2 * v - 1))
+                    .multiplyScalar(SKY_RADIUS);
+            const geometry = quad([at(d.u0, d.v0), at(d.u1, d.v0), at(d.u1, d.v1), at(d.u0, d.v1)]);
+            const mesh = new THREE.Mesh(geometry, this.skyMaterial(this.placeholder, this.placeholder));
+            mesh.name = 'detail';
+            mesh.renderOrder = -9; // over the forward face
+            mesh.frustumCulled = false;
+            mesh.visible = false;
+            this.sky.add(mesh);
+        }
     }
 
-    /** The sharper art-wall render, exactly over its part of the forward face. */
-    private addDetail(meta: RoomMeta, map: THREE.Texture, mask: THREE.Texture): void {
-        const d = meta.detail!;
-        const info = meta.faces['f'];
-        const dir = new THREE.Vector3(...info.dir);
-        const up = new THREE.Vector3(...info.up);
-        const right = new THREE.Vector3().crossVectors(dir, up);
-        const at = (u: number, v: number) =>
-            dir
-                .clone()
-                .add(right.clone().multiplyScalar(2 * u - 1))
-                .add(up.clone().multiplyScalar(2 * v - 1))
-                .multiplyScalar(SKY_RADIUS);
-        const corners = [at(d.u0, d.v0), at(d.u1, d.v0), at(d.u1, d.v1), at(d.u0, d.v1)];
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute(
-            'position',
-            new THREE.Float32BufferAttribute(
-                corners.flatMap((v) => [v.x, v.y, v.z]),
-                3,
-            ),
-        );
-        geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
-        geometry.setIndex([0, 1, 2, 0, 2, 3]);
-        const mesh = new THREE.Mesh(geometry, this.skyMaterial(map, mask));
-        mesh.name = 'detail';
-        mesh.renderOrder = -9; // over the forward face
-        mesh.frustumCulled = false;
-        this.sky.add(mesh);
+    /** The material a sky mesh should have now (base render + furniture), or null while its base is missing. */
+    private materialFor(slot: string, linearOut = false): THREE.ShaderMaterial | null {
+        const base = this.baseFor(slot);
+        if (!base) return null;
+        const d = this.meta?.detail;
+        const faceRect = slot === 'detail' && d ? new THREE.Vector4(d.u0, d.u1, d.v0, d.v1) : undefined;
+        return this.skyMaterial(base.map, base.mask, linearOut, this.layersFor(slot), faceRect);
+    }
+
+    /**
+     * The enabled items' layers on a face, in the room's drawing order (none for the room as designed). The
+     * detail patch uses an item's sharp detail layer, else its forward-face layer: both are in the forward
+     * face's UVs, so either lands in the right place.
+     */
+    private layersFor(slot: string): LayerTex[] {
+        if (this.baseMode === 'designed') return NO_LAYERS;
+        const out: LayerTex[] = [];
+        for (const item of this.items()) {
+            if (!this.appliedFurniture[item.key]) continue;
+            const patch = slot === 'detail' ? (item.detail ?? item.faces['f']) : item.faces[slot];
+            const map = patch && this.layerTextures.get(patch.file);
+            if (patch && map)
+                out.push({ map, rect: new THREE.Vector4(...patch.rect), obj: patch.obj ? this.layerTextures.get(patch.obj) : undefined });
+        }
+        return out;
+    }
+
+    /** Texture units a fragment shader may use on this GPU (WebGL 2 guarantees 16). */
+    private textureUnits(): number {
+        return Math.max(16, this.renderer?.capabilities.maxTextures ?? 16);
+    }
+
+    /** Puts every sky mesh on the current base and furniture (shader programs are cached per layer count). */
+    private refreshSky(): void {
+        for (const child of this.sky.children) {
+            const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+            const material = this.materialFor(mesh.name);
+            if (mesh.name === 'detail') mesh.visible = !!material;
+            if (!material) continue;
+            mesh.material.dispose();
+            mesh.material = material;
+        }
+        if (this.inspecting() && this.meta) this.buildWallPlane(this.meta);
+        this.scheduleEnvironment();
         this.requestFrame();
     }
 
-    private swapFace(face: string, map: THREE.Texture, mask: THREE.Texture): void {
-        const mesh = this.sky.getObjectByName(face) as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
-        if (!mesh) return;
-        const u = mesh.material.uniforms;
-        const oldMap = u['map'].value as THREE.Texture;
-        const oldMask = u['mask'].value as THREE.Texture;
-        u['map'].value = map;
-        u['mask'].value = mask;
-        this.requestFrame();
-        // Free the small versions after the new ones have been drawn.
-        requestAnimationFrame(() => {
-            oldMap.dispose();
-            oldMask.dispose();
+    /** Which render a face (or the detail) shows now: the empty one only where it differs from the designed one. */
+    private modeFor(slot: string): 'designed' | 'empty' {
+        return this.baseMode === 'empty' && this.emptySlots.has(slot) ? 'empty' : 'designed';
+    }
+
+    private baseFor(slot: string): BaseTex | undefined {
+        if (slot === 'detail' && this.detailHidden()) return undefined;
+        return this.bases[this.modeFor(slot)].get(slot);
+    }
+
+    /**
+     * The furniture layers were rendered without the sharp art-wall detail (to save GPU time): while the
+     * furniture differs from the design, the room's faces (with their layers) show there instead of a detail
+     * that would still contain the original furniture.
+     */
+    private detailHidden(): boolean {
+        return this.baseMode === 'empty' && !!this.meta?.layers?.empty.detailSkipped;
+    }
+
+    private emptySlotsOf(meta: RoomMeta): Set<string> {
+        const empty = meta.layers?.empty;
+        if (!empty) return new Set();
+        const faces = FACE_ORDER.filter((f) => !empty.facesList || empty.facesList.includes(f));
+        const detail = !!meta.detail && (empty.hasDetail ?? !!(empty.detail && empty.detailMask));
+        return new Set(detail ? [...faces, 'detail'] : faces);
+    }
+
+    /** A sharper (or first) texture pair for one face — or the detail — of the designed or the empty room. */
+    private setBase(mode: 'designed' | 'empty', slot: string, tex: BaseTex): void {
+        const old = this.bases[mode].get(slot);
+        this.bases[mode].set(slot, tex);
+        if (mode === this.modeFor(slot) && !(slot === 'detail' && this.detailHidden())) {
+            const mesh = this.sky.getObjectByName(slot) as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
+            if (mesh && slot === 'detail' && !mesh.visible) {
+                mesh.material.dispose();
+                mesh.material = this.materialFor(slot)!;
+                mesh.visible = true;
+            } else if (mesh) {
+                mesh.material.uniforms['map'].value = tex.map;
+                mesh.material.uniforms['mask'].value = tex.mask;
+            }
+            // The close-up wall samples the forward face and the detail directly.
+            if (this.inspecting() && this.meta && (slot === 'f' || slot === 'detail')) this.buildWallPlane(this.meta);
+            this.requestFrame();
+        }
+        // Free the old (smaller) versions after the new ones have been drawn.
+        if (old)
+            requestAnimationFrame(() => {
+                old.map.dispose();
+                old.mask.dispose();
+            });
+    }
+
+    /** Frees everything loaded for the current room (both bases and the furniture layers). */
+    private disposeRoomTextures(): void {
+        for (const set of [this.bases.designed, this.bases.empty]) {
+            for (const t of set.values()) {
+                t.map.dispose();
+                t.mask.dispose();
+            }
+            set.clear();
+        }
+        this.layerTextures.forEach((t) => t.dispose());
+        this.layerTextures.clear();
+        this.layerLoads.clear();
+        this.emptyLoad = null;
+        this.emptyReady = false;
+        this.baseMode = 'designed';
+        this.appliedFurniture = {};
+        this.furnitureToken++;
+        this.loadingItems.set([]);
+        this.furnitureBusy.set(false);
+    }
+
+    // ------------------------------------------------------------------ furniture
+
+    private defaultFurniture(): Record<string, boolean> {
+        return Object.fromEntries(this.items().map((i) => [i.key, !!i.default]));
+    }
+
+    protected toggleItem(key: string): void {
+        this.furniture.update((f) => ({ ...f, [key]: !f[key] }));
+    }
+
+    protected emptyRoom(): void {
+        this.furniture.set(Object.fromEntries(this.items().map((i) => [i.key, false])));
+    }
+
+    protected asDesigned(): void {
+        this.furniture.set(this.defaultFurniture());
+    }
+
+    private toggleFurniturePanel(): void {
+        if (this.furnitureOpen()) this.closeFurniture(false);
+        else this.furnitureOpen.set(true);
+    }
+
+    /** Closes the panel; from the keyboard, focus goes back to the toolbar button that opened it. */
+    protected closeFurniture(refocus: boolean): void {
+        this.furnitureOpen.set(false);
+        if (refocus) this.root().nativeElement.querySelector<HTMLButtonElement>('[data-room-tool="furniture"]')?.focus({ preventScroll: true });
+    }
+
+    /** Loads (once per room) a furniture layer: premultiplied on upload, so its mip-mapped edges stay clean. */
+    private layerTexture(dir: string, file: string, colour = true): Promise<THREE.Texture> {
+        let load = this.layerLoads.get(file);
+        if (!load) {
+            const token = this.loadToken;
+            load = this.loadTexture(`${dir}/${file}`, colour, colour).then((t) => {
+                if (token !== this.loadToken || this.destroyed) {
+                    t.dispose();
+                    throw new Error('stale');
+                }
+                this.renderer.initTexture(t);
+                this.layerTextures.set(file, t);
+                return t;
+            });
+            load.catch(() => this.layerLoads.delete(file)); // a failed one can be tried again
+            this.layerLoads.set(file, load);
+        }
+        return load;
+    }
+
+    /**
+     * The empty room, once per room: the 512 px faces first (with the full-size wall masks), so the switch is
+     * quick; the full faces and the empty art-wall detail then sharpen it, the face in view first.
+     */
+    private loadEmpty(meta: RoomMeta, dir: string): Promise<void> {
+        const empty = meta.layers!.empty;
+        const token = this.loadToken;
+        const name = (pattern: string, f: string) => pattern.replace('<face>', f);
+        const small = (file: string) => file.replace(/\.webp$/i, '-sm.webp');
+        const stale = () => token !== this.loadToken || this.destroyed;
+        const faces = FACE_ORDER.filter((f) => this.emptySlots.has(f));
+        this.emptyLoad ??= (async () => {
+            const firsts = await Promise.all(
+                faces.map((f) =>
+                    Promise.all([
+                        this.loadTexture(`${dir}/${small(name(empty.faces, f))}`, true).catch(() =>
+                            this.loadTexture(`${dir}/${name(empty.faces, f)}`, true),
+                        ),
+                        this.loadTexture(`${dir}/${name(empty.mask, f)}`, false),
+                    ]),
+                ),
+            );
+            if (stale()) {
+                firsts.flat().forEach((t) => t.dispose());
+                throw new Error('stale');
+            }
+            faces.forEach((f, i) => this.setBase('empty', f, { map: firsts[i][0], mask: firsts[i][1] }));
+            this.emptyReady = true;
+            void (async () => {
+                this.loadingHd.set(true);
+                try {
+                    const order = [...faces].sort((a, b) => this.faceWeight(meta, b) - this.faceWeight(meta, a));
+                    for (const f of order) {
+                        const map = await this.loadTexture(`${dir}/${name(empty.faces, f)}`, true);
+                        if (stale()) return map.dispose();
+                        this.renderer.initTexture(map);
+                        await new Promise((r) => requestAnimationFrame(() => r(null)));
+                        if (stale()) return map.dispose();
+                        // The mask is already full size: keep it, replace only the picture.
+                        const mask = this.bases.empty.get(f)!.mask;
+                        this.bases.empty.delete(f); // so setBase frees only the small picture
+                        const oldMap = firsts[faces.indexOf(f)][0];
+                        this.setBase('empty', f, { map, mask });
+                        requestAnimationFrame(() => oldMap.dispose());
+                    }
+                    if (this.emptySlots.has('detail')) {
+                        const [map, mask] = await Promise.all([
+                            this.loadTexture(`${dir}/${empty.detail ?? 'detail-empty.webp'}`, true),
+                            this.loadTexture(`${dir}/${empty.detailMask ?? 'detail-empty-mask.webp'}`, false),
+                        ]);
+                        if (stale()) {
+                            map.dispose();
+                            mask.dispose();
+                            return;
+                        }
+                        this.renderer.initTexture(map);
+                        this.renderer.initTexture(mask);
+                        this.setBase('empty', 'detail', { map, mask });
+                    }
+                } catch {
+                    /* the small empty room stays; nothing else to do */
+                } finally {
+                    if (!stale()) this.loadingHd.set(false);
+                }
+            })();
+        })();
+        this.emptyLoad.catch(() => {
+            if (!stale()) this.emptyLoad = null;
         });
+        return this.emptyLoad;
+    }
+
+    /**
+     * Shows the chosen furniture. As designed → the full render, exactly as without layers (and nothing is
+     * downloaded). Otherwise → the empty room, with every enabled item's layer laid over it; the switch waits
+     * until all of them are in, so the room never flashes empty.
+     */
+    private async syncFurniture(): Promise<void> {
+        const meta = this.meta;
+        if (!meta || !this.renderer || !this.sky.children.length) return;
+        const token = ++this.furnitureToken;
+        const want = { ...this.furniture() };
+        if (!meta.layers || !this.customised()) {
+            this.appliedFurniture = want;
+            this.loadingItems.set([]);
+            this.furnitureBusy.set(false);
+            if (this.baseMode !== 'designed') {
+                this.baseMode = 'designed';
+                this.refreshSky();
+            }
+            return;
+        }
+        const dir = `${BASE}/${meta.key || this.roomKey()}`;
+        const enabled = this.items().filter((i) => want[i.key]);
+        const patches = (i: RoomItem) => [...Object.values(i.faces), i.detail].filter((p): p is LayerPatch => !!p);
+        const files = (i: RoomItem) => patches(i).flatMap((p) => (p.obj ? [p.file, p.obj] : [p.file]));
+        const objs = new Set(enabled.flatMap((i) => patches(i).flatMap((p) => (p.obj ? [p.obj] : []))));
+        this.loadingItems.set(enabled.filter((i) => files(i).some((f) => !this.layerTextures.has(f))).map((i) => i.key));
+        this.furnitureBusy.set(this.loadingItems().length > 0 || !this.emptyReady);
+        try {
+            await Promise.all([this.loadEmpty(meta, dir), ...enabled.flatMap((i) => files(i).map((f) => this.layerTexture(dir, f, !objs.has(f))))]);
+        } catch {
+            if (token !== this.furnitureToken || this.destroyed) return;
+            this.loadingItems.set([]);
+            this.furnitureBusy.set(false);
+            const message = 'That furniture could not be loaded just now. Please try again.';
+            this.notice.set(message);
+            setTimeout(() => this.notice() === message && this.notice.set(''), 4000);
+            this.furniture.set({ ...this.appliedFurniture }); // the panel shows what is on screen
+            return;
+        }
+        if (token !== this.furnitureToken || this.destroyed) return;
+        this.appliedFurniture = want;
+        this.baseMode = 'empty';
+        this.loadingItems.set([]);
+        this.furnitureBusy.set(false);
+        this.refreshSky();
     }
 
     /** Reflections for glass and metal frames: the panorama itself, prefiltered once per room. */
@@ -799,9 +1384,10 @@ export class Room360 implements OnDestroy {
         const envScene = new THREE.Scene();
         for (const child of this.sky.children) {
             const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
-            const m = this.skyMaterial(mesh.material.uniforms['map'].value, mesh.material.uniforms['mask'].value, true);
+            const m = mesh.visible ? this.materialFor(mesh.name, true) : null;
+            if (!m) continue;
             const copy = new THREE.Mesh(mesh.geometry, m);
-            copy.renderOrder = -10;
+            copy.renderOrder = mesh.renderOrder;
             copy.frustumCulled = false;
             envScene.add(copy);
         }
@@ -871,7 +1457,14 @@ export class Room360 implements OnDestroy {
                 glazing: piece.glazing,
                 depthMm: piece.depthMm,
                 edgeStyle: piece.edgeStyle,
-                texture: this.pictureTexture((this.inspecting() && piece.detailUrl) || piece.imageUrl, d.picW, d.picH, piece.imageUrl),
+                rotation: piece.rotation ?? 0,
+                texture: this.pictureTexture(
+                    (this.inspecting() && piece.detailUrl) || piece.imageUrl,
+                    d.picW,
+                    d.picH,
+                    piece.imageUrl,
+                    piece.rotation ?? 0,
+                ),
             });
             group.position.set(x, y, -meta.artWall.distance + 0.002);
             group.userData['pieceKey'] = key;
@@ -935,15 +1528,15 @@ export class Room360 implements OnDestroy {
         material.needsUpdate = true;
     }
 
-    private pictureTexture(url: string | null, picW: number, picH: number, fallback: string | null = null): THREE.Texture {
+    private pictureTexture(url: string | null, picW: number, picH: number, fallback: string | null = null, rotation = 0): THREE.Texture {
         if (!url) return this.placeholder;
         if (fallback && fallback !== url && !this.textures.has(url) && this.textures.has(fallback)) {
             this.pictureTexture(url, picW, picH); // start loading the sharper one
-            return this.pictureTexture(fallback, picW, picH);
+            return this.pictureTexture(fallback, picW, picH, null, rotation);
         }
         const loaded = this.textures.get(url);
         if (loaded) {
-            const cropped = coverTexture(loaded, picW, picH);
+            const cropped = coverTexture(loaded, picW, picH, rotation);
             if (cropped !== loaded) this.pieceTextures.push(cropped);
             return cropped;
         }
@@ -972,7 +1565,7 @@ export class Room360 implements OnDestroy {
     // ------------------------------------------------------------------ view
 
     /** Turns to the artwork; `close` frames it tightly, otherwise shows it with the room around it. */
-    lookAtArt(close: boolean, instant = false): void {
+    lookAtArt(close: boolean, instant = false, duration = 700): void {
         const meta = this.meta;
         if (!meta) return;
         const { rowW, maxH, y, cx } = this.layout(meta);
@@ -988,7 +1581,7 @@ export class Room360 implements OnDestroy {
         const vFromH = 2 * Math.atan(Math.tan(hFov / 2) / Math.max(0.5, this.camera.aspect));
         const fit = THREE.MathUtils.radToDeg(Math.max(vFov, vFromH));
         const fov = this.clampFov(close ? Math.min(fit, 70) : THREE.MathUtils.clamp(fit, 72, 88));
-        this.animateTo(yaw, pitch, fov, instant);
+        this.animateTo(yaw, pitch, fov, instant, duration);
     }
 
     /**
@@ -1004,7 +1597,7 @@ export class Room360 implements OnDestroy {
         const meta = this.meta;
         const face = meta?.faceSize ?? 1536;
         const d = meta?.detail;
-        if (!d || !this.sky.getObjectByName('detail')) return face;
+        if (!d || !this.sky.getObjectByName('detail')?.visible) return face;
         const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, -this.yaw, 0, 'YXZ'));
         if (dir.z >= -0.05) return face;
         const u = (dir.x / -dir.z + 1) / 2;
@@ -1021,12 +1614,82 @@ export class Room360 implements OnDestroy {
         return THREE.MathUtils.clamp(screenPx / ((this.sharpnessInView() / 90) * 1.1), 10, 75);
     }
 
+    /**
+     * The +/− buttons. Up close they move the 3D camera towards / away from the point in the middle of the
+     * view (backing right off returns to the room); in the room they zoom, and zooming in past the room's
+     * sharpness walks up to the artwork, like the mouse wheel does.
+     */
     zoomBy(factor: number): void {
-        this.animateTo(this.yaw, this.pitch, this.clampFov(this.fov * factor));
+        this.hint.set(false);
+        if (this.inspecting()) {
+            this.dollyInspect(factor);
+            return;
+        }
+        const want = this.fov * factor;
+        if (factor < 1 && want < this.minFov() - 0.5) {
+            const key = this.pieceInView();
+            if (key) {
+                this.enterInspect(key);
+                return;
+            }
+        }
+        this.animateTo(this.yaw, this.pitch, this.clampFov(want), false, 260);
+    }
+
+    /** Back to exactly how the room opened: furniture as designed, the artwork in its default place, the starting view. */
+    resetView(): void {
+        this.hint.set(false);
+        if (this.inspecting()) this.exitInspect();
+        if (this.customised()) this.asDesigned();
+        if (Object.keys(this.offsets()).length) {
+            this.offsets.set({});
+            this.buildPieces();
+        }
+        this.lookAtArt(false, false, 380);
+    }
+
+    /** The artwork nearest the middle of the view (the first one if none is close). */
+    private pieceInView(): string | null {
+        const centre = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, -this.yaw, 0, 'YXZ'));
+        let best: string | null = null;
+        let bestDot = -Infinity;
+        for (const [key, g] of this.pieceGroups) {
+            const dot = g.getWorldPosition(new THREE.Vector3()).normalize().dot(centre);
+            if (dot > bestDot) {
+                bestDot = dot;
+                best = key;
+            }
+        }
+        return best;
+    }
+
+    /** Close-up +/−: glide the camera along its line to the target (quick, eased), within the close-up's limits. */
+    private dollyInspect(factor: number): void {
+        const c = this.controls;
+        if (!c) return;
+        const from = this.camera.position.clone();
+        const offset = from.clone().sub(c.target);
+        const dist = offset.length();
+        const next = dist * factor;
+        if (factor > 1 && next > c.maxDistance - 0.06) {
+            this.exitInspect(); // stepping back past the close-up: back to the room
+            return;
+        }
+        const to = c.target.clone().add(offset.setLength(THREE.MathUtils.clamp(next, c.minDistance, c.maxDistance - 0.06)));
+        cancelAnimationFrame(this.animation);
+        const start = performance.now();
+        const step = (now: number) => {
+            if (!this.inspecting() || this.controls !== c) return;
+            const t = Math.min(1, (now - start) / 240);
+            this.camera.position.lerpVectors(from, to, 1 - Math.pow(1 - t, 3));
+            this.requestFrame();
+            if (t < 1) this.animation = requestAnimationFrame(step);
+        };
+        this.animation = requestAnimationFrame(step);
     }
 
     private animation = 0;
-    private animateTo(yaw: number, pitch: number, fov: number, instant = false): void {
+    private animateTo(yaw: number, pitch: number, fov: number, instant = false, duration = 700): void {
         cancelAnimationFrame(this.animation);
         this.velocity = { yaw: 0, pitch: 0 };
         if (instant) {
@@ -1042,7 +1705,7 @@ export class Room360 implements OnDestroy {
         dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
         const start = performance.now();
         const step = (now: number) => {
-            const t = Math.min(1, (now - start) / 700);
+            const t = Math.min(1, (now - start) / duration);
             const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
             this.yaw = from.yaw + dYaw * e;
             this.pitch = from.pitch + (pitch - from.pitch) * e;
@@ -1281,6 +1944,11 @@ export class Room360 implements OnDestroy {
         const F = meta.artWall.distance;
         const startDist = Math.min(dist, F - 0.3);
 
+        // Up close the camera gets within millimetres of the canvas: draw that near (the room's 5 cm would clip
+        // the picture away at the deepest zoom). Restored when leaving.
+        this.camera.near = 0.002;
+        this.camera.far = 60;
+        this.camera.updateProjectionMatrix();
         const controls = new OrbitControls(this.camera, this.renderer.domElement);
         controls.target.copy(target);
         controls.enableDamping = true;
@@ -1288,6 +1956,12 @@ export class Room360 implements OnDestroy {
         controls.rotateSpeed = 0.6;
         controls.zoomSpeed = 0.9;
         controls.screenSpacePanning = true;
+        // Zoom goes where the pointer is (a corner, the frame), not just the middle; dragging slides across the
+        // piece like a document, and the right button / two fingers tilt round it to see the frame's depth.
+        controls.zoomToCursor = true;
+        controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+        controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+        controls.panSpeed = 1;
         controls.minDistance = 0.05; // nose to the canvas
         // Close enough that the (true 3D) art wall always fills the view.
         controls.maxDistance = Math.max(startDist + 0.25, Math.min(F - 0.05, Math.max(1.3, startDist * 1.5)));
@@ -1297,12 +1971,15 @@ export class Room360 implements OnDestroy {
         controls.maxAzimuthAngle = THREE.MathUtils.degToRad(40);
         controls.minPolarAngle = THREE.MathUtils.degToRad(65);
         controls.maxPolarAngle = THREE.MathUtils.degToRad(115);
-        const bounds = { x: piece.outerW / 2 + 0.1, y: piece.outerH / 2 + 0.1 };
+        const bounds = { x: piece.outerW / 2 + 0.15, y: piece.outerH / 2 + 0.15 };
+        const front = new THREE.Box3().setFromObject(g).max.z + 0.01;
         controls.addEventListener('change', () => {
             // Sliding across the picture stays on the picture.
             controls.target.x = THREE.MathUtils.clamp(controls.target.x, g.position.x - bounds.x, g.position.x + bounds.x);
             controls.target.y = THREE.MathUtils.clamp(controls.target.y, g.position.y - bounds.y, g.position.y + bounds.y);
             controls.target.z = target.z;
+            // Never through the painting or its frame: stay at least 1 cm in front of the piece's front face.
+            if (this.camera.position.z < front) this.camera.position.z = front;
             if (this.gliding) return;
             // Backing right off returns to the room.
             if (this.camera.position.distanceTo(controls.target) > controls.maxDistance - 0.05) {
@@ -1348,6 +2025,10 @@ export class Room360 implements OnDestroy {
         this.gliding = false;
         this.controls?.dispose();
         this.controls = null;
+        this.resetPictureFilter();
+        this.camera.near = 0.05;
+        this.camera.far = 200;
+        this.camera.updateProjectionMatrix();
         this.inspecting.set(false);
         this.removeWallPlane();
         this.camera.position.set(0, 0, 0);
@@ -1382,9 +2063,18 @@ export class Room360 implements OnDestroy {
     /** The art wall as a real plane, textured with the room's render (the sharp detail where there is one). */
     private buildWallPlane(meta: RoomMeta): void {
         this.removeWallPlane();
-        const face = this.sky.getObjectByName('f') as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
+        const face = this.baseFor('f');
         if (!face) return;
-        const detail = this.sky.getObjectByName('detail') as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial> | undefined;
+        const detailMesh = this.sky.getObjectByName('detail');
+        const detail = detailMesh?.visible ? this.baseFor('detail') : undefined;
+        // Furniture on the art wall: inside the detail, each item's sharp layer (or its face layer); outside it,
+        // the face layers that reach out of the detail. Five units go to the room's own textures; the detail
+        // (where the close-up looks) is served first.
+        const d0 = meta.detail;
+        const outside = (l: LayerTex) => !detail || !d0 || l.rect.x < d0.u0 || l.rect.z > d0.u1 || l.rect.y < d0.v0 || l.rect.w > d0.v1;
+        const units = this.textureUnits() - 5;
+        const detailLayers = detail ? fitLayers(this.layersFor('detail'), units) : NO_LAYERS;
+        const faceLayers = fitLayers(this.layersFor('f').filter(outside), units - detailLayers.reduce((n, l) => n + layerCost(l), 0));
         const F = meta.artWall.distance;
         const W = meta.room?.width ?? 2 * F;
         const left = Math.max(-W / 2, -F);
@@ -1394,10 +2084,12 @@ export class Room360 implements OnDestroy {
         const d = meta.detail;
         const material = new THREE.ShaderMaterial({
             uniforms: {
-                faceMap: { value: face.material.uniforms['map'].value },
-                faceMask: { value: face.material.uniforms['mask'].value },
-                detailMap: { value: detail?.material.uniforms['map'].value ?? null },
-                detailMask: { value: detail?.material.uniforms['mask'].value ?? null },
+                faceMap: { value: face.map },
+                faceMask: { value: face.mask },
+                detailMap: { value: detail?.map ?? null },
+                detailMask: { value: detail?.mask ?? null },
+                ...layerUniforms('faceItem', faceLayers),
+                ...layerUniforms('detailItem', detailLayers),
                 detailRect: { value: d && detail ? new THREE.Vector4(d.u0, d.u1, d.v0, d.v1) : new THREE.Vector4(2, 2, 2, 2) },
                 distance: { value: F },
                 roomLight: this.uniforms.roomLight,
@@ -1430,12 +2122,15 @@ export class Room360 implements OnDestroy {
                 uniform vec3 wallRatio;
                 varying vec3 vPos;
                 ${TONE_GLSL}
+                ${layerGlsl('faceItem', faceLayers)}
+                ${layerGlsl('detailItem', detailLayers)}
                 void main() {
                     // Where the original eye saw this point of the wall.
                     vec2 uv = (vPos.xy / distance + 1.0) * 0.5;
                     vec3 c;
                     float m;
-                    if (uv.x > detailRect.x && uv.x < detailRect.y && uv.y > detailRect.z && uv.y < detailRect.w) {
+                    bool inDetail = uv.x > detailRect.x && uv.x < detailRect.y && uv.y > detailRect.z && uv.y < detailRect.w;
+                    if (inDetail) {
                         vec2 d = (uv - detailRect.xz) / (detailRect.yw - detailRect.xz);
                         c = texture2D(detailMap, d).rgb;
                         m = texture2D(detailMask, d).r;
@@ -1450,6 +2145,8 @@ export class Room360 implements OnDestroy {
                         vec3 plain = r360SrgbToLinear(texture2D(roomLight, ruv).rgb) * roomLightScale * wallBase * wallRatio;
                         lin = mix(plain, lin, smoothstep(0.35, 0.9, m));
                     }
+                    // Furniture over the (repainted) empty wall: the objects never painted, their shadows are.
+                    lin = inDetail ? detailItemOver(lin, uv, m) : faceItemOver(lin, uv, m);
                     gl_FragColor = vec4(r360LinearToSrgb(r360Tone(lin)), 1.0);
                 }
             `,
@@ -1518,7 +2215,8 @@ export class Room360 implements OnDestroy {
         if (!this.renderer || this.destroyed) return;
         if (this.inspecting() && this.controls) {
             if (this.gliding) return; // the glide draws its own frames
-            this.controls.update();
+            if (this.controls.update()) this.requestFrame(); // damping still easing out: keep drawing
+            this.updatePictureFilter();
             // The panorama stays "at infinity" around the moving camera; the art wall itself is real geometry.
             this.sky.position.copy(this.camera.position);
             this.renderer.render(this.scene, this.camera);
@@ -1540,6 +2238,55 @@ export class Room360 implements OnDestroy {
         this.renderer.render(this.scene, this.camera);
     }
 
+    /**
+     * Up close, once one picture pixel covers more than ~2.5 screen pixels, draw the pixels crisp (nearest)
+     * instead of smearing them; back to smooth below 2. Same rule as the full-page viewer. The filter is only
+     * changed when crossing the threshold, since it re-uploads the texture.
+     */
+    private pixelated = false;
+    private updatePictureFilter(): void {
+        const key = this.inspectKey;
+        const piece = key ? this.dims().find((p) => p.key === key) : null;
+        const g = key ? this.pieceGroups.get(key) : null;
+        if (!piece || !g) return;
+        const dist = Math.max(0.01, this.camera.position.distanceTo(this.controls!.target));
+        const viewH = 2 * dist * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+        const screenPxPerMetre = this.renderer.domElement.height / viewH;
+        let texels = 0;
+        g.traverse((o) => {
+            const map = ((o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined)?.map;
+            const img = map?.image as { width?: number; height?: number } | undefined;
+            // The picture is always upright (a swap only stretches it), so its width runs across the piece.
+            const across = (img?.width ?? 0) * (map?.repeat.x ?? 0);
+            if (map && map !== this.placeholder && !(map as THREE.CanvasTexture).isCanvasTexture && img?.width && across > 0)
+                texels = Math.max(texels, across);
+        });
+        if (!texels) return;
+        const ratio = (piece.d.picW * screenPxPerMetre) / texels;
+        const want = this.pixelated ? ratio > 2 : ratio > 2.5;
+        if (want === this.pixelated) return;
+        this.pixelated = want;
+        g.traverse((o) => {
+            const map = ((o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined)?.map;
+            if (!map || map === this.placeholder || (map as THREE.CanvasTexture).isCanvasTexture) return;
+            if (!(map.image as { width?: number } | undefined)?.width) return;
+            map.magFilter = want ? THREE.NearestFilter : THREE.LinearFilter;
+            map.needsUpdate = true;
+        });
+    }
+
+    /** Back to smooth filtering on every picture (leaving the close-up). */
+    private resetPictureFilter(): void {
+        if (!this.pixelated) return;
+        this.pixelated = false;
+        for (const t of [...this.textures.values(), ...this.pieceTextures]) {
+            if (t.magFilter === THREE.NearestFilter) {
+                t.magFilter = THREE.LinearFilter;
+                t.needsUpdate = true;
+            }
+        }
+    }
+
     /** New colour ÷ the colour the wall was rendered or photographed in ("original" = unchanged). */
     private updateWallRatio(): void {
         const meta = this.meta;
@@ -1551,6 +2298,12 @@ export class Room360 implements OnDestroy {
         const c = hexToLinear(wall);
         const base = meta.wallColour ?? [meta.wallAlbedo, meta.wallAlbedo, meta.wallAlbedo];
         this.uniforms.wallRatio.value.set(c.x / base[0], c.y / base[1], c.z / base[2]);
+    }
+
+    /** A swatch tapped in the room: paint the wall and tell the page (it saves the colour with the artwork). */
+    protected pickWall(hex: string): void {
+        this.wall.set(hex);
+        this.wallChange.emit(hex);
     }
 
     protected sameColour(hex: string): boolean {
@@ -1643,10 +2396,9 @@ export class Room360 implements OnDestroy {
         for (const child of this.sky.children) {
             const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
             mesh.geometry.dispose();
-            mesh.material.uniforms['map'].value?.dispose();
-            mesh.material.uniforms['mask'].value?.dispose();
             mesh.material.dispose();
         }
+        this.disposeRoomTextures();
         this.uniforms.roomLight.value?.dispose();
         clearTimeout(this.envTimer);
         this.controls?.dispose();

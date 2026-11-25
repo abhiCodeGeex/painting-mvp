@@ -50,8 +50,10 @@ class PricingEngine
         $medium = $c->mediumId ? Medium::find($c->mediumId) : null;
         $substrate = $c->substrateId ? Substrate::find($c->substrateId) : null;
         $frame = $c->frameId ? Frame::find($c->frameId) : null;
-        $mat = $c->matId && (! $substrate || $substrate->allows_mat) ? Mat::find($c->matId) : null;
-        $glazing = $c->glazingId ? Glazing::find($c->glazingId) : null;
+        // Mat and glass only go inside a frame: with no frame (and no frame advice asked for) they are not charged.
+        $framed = $frame || $c->frameAdvice;
+        $mat = $framed && $c->matId && (! $substrate || $substrate->allows_mat) ? Mat::find($c->matId) : null;
+        $glazing = $framed && $c->glazingId ? Glazing::find($c->glazingId) : null;
         $finishings = $c->finishingIds ? Finishing::whereIn('id', $c->finishingIds)->orderBy('sort_order')->get() : collect();
 
         $dims = $this->dimensions($c, $frame, $mat);

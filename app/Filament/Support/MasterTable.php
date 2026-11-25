@@ -2,6 +2,8 @@
 
 namespace App\Filament\Support;
 
+use App\Enums\StockStatus;
+use App\Filament\Resources\Inventory\StockItems\StockItemResource;
 use App\Support\Money;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
@@ -79,6 +81,26 @@ class MasterTable
             ->formatStateUsing(fn ($state): string => rtrim(rtrim(number_format(((int) $state) / 10, 1, '.', ''), '0'), '.').' cm')
             ->alignEnd()
             ->sortable()
+            ->placeholder('—');
+    }
+
+    /**
+     * Stock on hand, coloured like the inventory (amber = low, red = out). The table's query
+     * must eager-load `stockItem`. Clicking it opens the inventory, where stock is adjusted.
+     */
+    public static function stock(): TextColumn
+    {
+        return TextColumn::make('stock')
+            ->label('Stock')
+            ->state(fn ($record): ?string => $record->stockItem?->formattedQuantity())
+            ->badge()
+            ->color(fn ($record): string => $record->stockItem?->status()->getColor() ?? 'gray')
+            ->icon(fn ($record): ?string => $record->stockItem && $record->stockItem->status() !== StockStatus::Ok
+                ? $record->stockItem->status()->getIcon()
+                : null)
+            ->tooltip(fn ($record): ?string => $record->stockItem?->status()->getLabel())
+            ->url(fn ($record): ?string => $record->stockItem ? StockItemResource::getUrl('index', ['search' => $record->name]) : null)
+            ->alignEnd()
             ->placeholder('—');
     }
 

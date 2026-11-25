@@ -226,9 +226,12 @@ export function buildArtwork(
         depthMm: number;
         edgeStyle: string | null;
         texture: THREE.Texture;
+        /** Picture turned clockwise by this many degrees (0/90/180/270); crop the texture with coverTexture(…, rotation). */
+        rotation?: number;
     },
 ): THREE.Group {
     const { frame, mat, glazing, depthMm, edgeStyle, texture } = opts;
+    const rotation = opts.rotation ?? 0;
     const group = new THREE.Group();
     const frameDepth = frame ? M(Math.max(15, frame.depth_mm ?? 25)) : 0;
     const floater = frame?.profile === 'floater';
@@ -276,13 +279,16 @@ export function buildArtwork(
             artworkMaterial({ map: texture, roughness: 0.85 }),
             new THREE.MeshStandardMaterial({ color: '#cfc8bd' }),
         ];
-        const block = new THREE.Mesh(new THREE.BoxGeometry(d.picW, d.picH, canvasDepth), materials);
+        const block = new THREE.Mesh(rotateUvs(new THREE.BoxGeometry(d.picW, d.picH, canvasDepth), rotation), materials);
         block.position.set(0, picY, faceZ - canvasDepth / 2);
         block.castShadow = true;
         block.receiveShadow = false;
         group.add(block);
     } else {
-        const picture = new THREE.Mesh(new THREE.PlaneGeometry(d.picW, d.picH), artworkMaterial({ map: texture, roughness: 0.8 }));
+        const picture = new THREE.Mesh(
+            rotateUvs(new THREE.PlaneGeometry(d.picW, d.picH), rotation),
+            artworkMaterial({ map: texture, roughness: 0.8 }),
+        );
         picture.position.set(0, picY, faceZ);
         // No shadow-map on the print itself: a flat plane a few mm in front of the wall gets shadow
         // "acne" (fine stripes) at grazing sun angles. The frame's shade comes from the contact shadows.
@@ -486,13 +492,50 @@ export function woodTexture(): THREE.Texture {
     return t;
 }
 
-/** "Cover" the picture area like CSS background-size: cover. */
-export function coverTexture(source: THREE.Texture, picW: number, picH: number): THREE.Texture {
+/** Rotate swaps width and height only: the upright picture is stretched to fill, never turned. */
+const STRETCH_ON_SWAP = true;
+
+/** Normalises a rotation to 0, 90, 180 or 270 (degrees clockwise). */
+export function quarterTurns(rotation: number | null | undefined): 0 | 90 | 180 | 270 {
+    const r = ((Math.round((rotation ?? 0) / 90) % 4) + 4) % 4;
+    return (r * 90) as 0 | 90 | 180 | 270;
+}
+
+/**
+ * Turns the picture clockwise by rotating the geometry's texture coordinates around their centre
+ * (baked into the mesh, so it survives the GLB export for AR, unlike a texture transform).
+ */
+function rotateUvs<T extends THREE.BufferGeometry>(geometry: T, rotation: number): T {
+    // Rotate now only swaps the piece's width and height; the picture itself always stays upright.
+    const turns = STRETCH_ON_SWAP ? 0 : quarterTurns(rotation);
+    if (!turns) return geometry;
+    const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
+    // Clockwise on the wall = counter-clockwise in UV space (v points up).
+    const a = (turns * Math.PI) / 180;
+    const c = Math.round(Math.cos(a));
+    const s = Math.round(Math.sin(a));
+    for (let i = 0; i < uv.count; i++) {
+        const x = uv.getX(i) - 0.5;
+        const y = uv.getY(i) - 0.5;
+        uv.setXY(i, 0.5 + x * c - y * s, 0.5 + x * s + y * c);
+    }
+    uv.needsUpdate = true;
+    return geometry;
+}
+
+/**
+ * "Cover" the picture area like CSS background-size: cover. With a 90/270° turn the image's width
+ * runs along the piece's height, so the crop is computed against the swapped aspect.
+ */
+export function coverTexture(source: THREE.Texture, picW: number, picH: number, rotation = 0): THREE.Texture {
+    const swapped = quarterTurns(rotation) !== 0;
+    if (!STRETCH_ON_SWAP && quarterTurns(rotation) % 180) [picW, picH] = [picH, picW];
     const t = source.clone();
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = Math.max(source.anisotropy, 8);
     const img = source.image as { width: number; height: number } | undefined;
-    if (img?.width && img.height) {
+    // Sides swapped: the whole upright picture is stretched over the piece (no crop).
+    if (img?.width && img.height && !(STRETCH_ON_SWAP && swapped)) {
         const imageAspect = img.width / img.height;
         const areaAspect = picW / picH;
         if (imageAspect > areaAspect) {

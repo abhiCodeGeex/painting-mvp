@@ -118,6 +118,7 @@ import { outerSize, type PreviewFrame, type PreviewMat } from './preview-helpers
                                 [frame]="frame()"
                                 [mat]="mat()"
                                 [depthMm]="depthMm()"
+                                [rotation]="rotation()"
                                 [scale]="mmScale()"
                             />
                         </div>
@@ -144,6 +145,8 @@ export class ArtworkLightbox {
     readonly frame = input<PreviewFrame | null>(null);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
+    /** Picture turned clockwise (0/90/180/270°); widthMm/heightMm are already the turned piece's size. */
+    readonly rotation = input(0);
     readonly sizeLabel = input('');
 
     protected readonly X = X;
@@ -170,11 +173,18 @@ export class ArtworkLightbox {
         return Math.min((v.w - 2 * this.pad) / o.width, (v.h - 2 * this.pad) / o.height) * 0.92;
     });
     protected shownUrl = computed(() => (this.fullReady() ? this.fullUrl() : this.previewUrl()) ?? this.fullUrl());
-    /** Screen pixels per image pixel at the current zoom. */
-    private pixelRatio = computed(() => {
+    /** Image pixels across the piece's width. */
+    private acrossPx = computed(() => {
         const n = this.natural();
         if (!n) return 0;
-        return (this.widthMm() * this.mmScale() * this.scale()) / n.w;
+        // Always upright: a width/height swap only stretches the picture.
+        return n.w;
+    });
+    /** Screen pixels per image pixel at the current zoom. */
+    private pixelRatio = computed(() => {
+        const across = this.acrossPx();
+        if (!across) return 0;
+        return (this.widthMm() * this.mmScale() * this.scale()) / across;
     });
     protected pixelated = computed(() => this.pixelRatio() > 2);
     protected percent = computed(() => {
@@ -183,8 +193,7 @@ export class ArtworkLightbox {
     });
     /** Up to 32 screen pixels per image pixel: every single pixel visible. */
     private maxScale = computed(() => {
-        const n = this.natural();
-        const base = (this.widthMm() * this.mmScale()) / (n?.w ?? this.widthMm() * this.mmScale());
+        const base = (this.widthMm() * this.mmScale()) / (this.acrossPx() || this.widthMm() * this.mmScale());
         return Math.max(4, 32 / base);
     });
 
@@ -194,20 +203,24 @@ export class ArtworkLightbox {
     constructor() {
         const onKey = (e: KeyboardEvent) => {
             if (!this.open()) return;
-            if (e.key === 'Escape') this.open.set(false);
-            else if (e.key === '+' || e.key === '=') this.zoomBy(1.6);
+            if (e.key === 'Escape') {
+                // Caught before it reaches the page, so Esc closes only the lightbox, not the dialog under it.
+                e.stopPropagation();
+                e.preventDefault();
+                this.open.set(false);
+            } else if (e.key === '+' || e.key === '=') this.zoomBy(1.6);
             else if (e.key === '-') this.zoomBy(1 / 1.6);
             else if (e.key === '0') this.reset();
         };
         const onResize = () => this.viewport.set({ w: window.innerWidth, h: window.innerHeight - 56 });
-        window.addEventListener('keydown', onKey);
+        window.addEventListener('keydown', onKey, true);
         window.addEventListener('resize', onResize);
         // Live on <body>: opened from inside a dialog, a transformed ancestor would otherwise confine the
         // "fixed" full-page view to that dialog's box.
         const host = inject(ElementRef<HTMLElement>).nativeElement as HTMLElement;
         afterNextRender(() => document.body.appendChild(host));
         inject(DestroyRef).onDestroy(() => {
-            window.removeEventListener('keydown', onKey);
+            window.removeEventListener('keydown', onKey, true);
             window.removeEventListener('resize', onResize);
             host.remove();
         });
@@ -250,9 +263,9 @@ export class ArtworkLightbox {
 
     /** One image pixel = one screen pixel, around the centre of the screen. */
     actualPixels(): void {
-        const n = this.natural();
-        if (!n) return;
-        const target = n.w / (this.widthMm() * this.mmScale());
+        const across = this.acrossPx();
+        if (!across) return;
+        const target = across / (this.widthMm() * this.mmScale());
         this.zoomTo(target / this.scale());
     }
 

@@ -28,20 +28,5 @@
     "key": "lobby",
     "title": "Hotel lobby",
     "kind": "render"
-  },
-  {
-    "key": "photo-reading-room",
-    "title": "Reading room",
-    "kind": "photo"
-  },
-  {
-    "key": "photo-seaview-suite",
-    "title": "Sea-view suite",
-    "kind": "photo"
-  },
-  {
-    "key": "photo-sunny-apartment",
-    "title": "Sunny apartment",
-    "kind": "photo"
   }
 ]

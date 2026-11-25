@@ -52,6 +52,8 @@ class EnquiryWorkflow
             $enquiry->last_customer_activity_at = now();
             // What the customer was shown, so staff can compare it with the quote they prepare.
             $enquiry->estimate_snapshot = app(CustomerEstimate::class)->forEnquiry($enquiry);
+            // No manual assignment needed: a new enquiry goes straight to the super admin.
+            $enquiry->assigned_to ??= $this->defaultAssignee()?->id;
             $this->transition($enquiry, EnquiryStatus::Submitted, $by);
             $this->systemMessage($enquiry, 'Enquiry submitted.');
         });
@@ -60,6 +62,14 @@ class EnquiryWorkflow
         Notification::send($this->staffRecipients($enquiry), new EnquirySubmittedForStaff($enquiry));
 
         return $enquiry;
+    }
+
+    /** Who new enquiries are assigned to: the first active super admin (role name from filament-shield). */
+    private function defaultAssignee(): ?User
+    {
+        $role = config('filament-shield.super_admin.name', 'super_admin');
+
+        return User::role($role)->orderBy('id')->first();
     }
 
     /**

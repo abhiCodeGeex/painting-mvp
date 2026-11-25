@@ -17,6 +17,8 @@ export type LineForm = {
     size_reference: 'image' | 'outer';
     width_mm: number;
     height_mm: number;
+    /** The picture turned clockwise (0 / 90 / 180 / 270°). In the form, width/height are the piece as it hangs. */
+    image_rotation: number;
     quantity: number;
     quality_tier_id: number | null;
     medium_id: number | null;
@@ -34,6 +36,11 @@ export type LineForm = {
     wall_colour: string;
     notes: string;
 };
+
+/** A catalogue painting saved turned by 90° or 270°. */
+function turnedSideways(line: EnquiryLine | null): boolean {
+    return !!line && line.source_type === 'catalog' && ((line.image_rotation ?? 0) / 90) % 2 === 1;
+}
 
 export function initialLineForm(line: EnquiryLine | null, options: CatalogOptions): LineForm {
     const standardTier = options.quality_tiers[0];
@@ -56,8 +63,10 @@ export function initialLineForm(line: EnquiryLine | null, options: CatalogOption
         rights_confirmed: line?.rights_confirmed ?? false,
         unit: line?.unit ?? 'cm',
         size_reference: line?.size_reference ?? 'image',
-        width_mm: line?.width_mm ?? 500,
-        height_mm: line?.height_mm ?? 700,
+        // Saved as the painting's own size; the form shows it as it hangs (swapped when turned 90°/270°).
+        width_mm: (turnedSideways(line) ? line?.height_mm : line?.width_mm) ?? 500,
+        height_mm: (turnedSideways(line) ? line?.width_mm : line?.height_mm) ?? 700,
+        image_rotation: line?.image_rotation ?? 0,
         quantity: line?.quantity ?? 1,
         quality_tier_id: line ? line.quality_tier_id : (standardTier?.id ?? null),
         medium_id: line ? line.medium_id : (standardTier?.default_medium_id ?? null),

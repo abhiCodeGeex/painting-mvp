@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Portal;
 
 use App\Enums\LineSource;
+use App\Enums\OwnArtworkService;
 use App\Http\Requests\Portal\EnquiryLineRequest;
 use App\Models\Enquiry;
 use App\Models\EnquiryLine;
@@ -102,6 +103,7 @@ class EnquiryLineController extends PortalController
             'width_mm' => $data['width_mm'],
             'height_mm' => $data['height_mm'],
             'quantity' => $data['quantity'],
+            'image_rotation' => (int) ($data['image_rotation'] ?? 0),
             'quality_tier_id' => $data['quality_tier_id'] ?? null,
             'medium_id' => $data['medium_id'] ?? null,
             'substrate_id' => $data['substrate_id'] ?? null,
@@ -138,14 +140,22 @@ class EnquiryLineController extends PortalController
             $line->clearMediaCollection('hi_res');
         }
 
-        foreach ($request->file('references', []) as $file) {
-            $line->addMedia($file)->toMediaCollection('references');
+        // New files are kept only where they belong to the chosen source.
+        if ($source === LineSource::CustomCreation) {
+            foreach ($request->file('references', []) as $file) {
+                $line->addMedia($file)->toMediaCollection('references');
+            }
         }
-        if ($request->hasFile('artwork_photo')) {
-            $line->addMediaFromRequest('artwork_photo')->toMediaCollection('artwork_photo');
-        }
-        if ($request->hasFile('hi_res')) {
-            $line->addMediaFromRequest('hi_res')->toMediaCollection('hi_res');
+        if ($source === LineSource::OwnArtwork) {
+            if ($request->hasFile('artwork_photo')) {
+                $line->addMediaFromRequest('artwork_photo')->toMediaCollection('artwork_photo');
+            }
+            $reproduce = ($line->own_artwork['service'] ?? null) === OwnArtworkService::ReproduceAndFrame->value;
+            if (! $reproduce) {
+                $line->clearMediaCollection('hi_res');
+            } elseif ($request->hasFile('hi_res')) {
+                $line->addMediaFromRequest('hi_res')->toMediaCollection('hi_res');
+            }
         }
     }
 }

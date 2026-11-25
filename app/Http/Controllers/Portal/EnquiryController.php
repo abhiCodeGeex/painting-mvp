@@ -54,7 +54,8 @@ class EnquiryController extends PortalController
             'delivery_address_id' => $customer->addresses()->where('kind', AddressKind::Delivery)->orderByDesc('is_default')->value('id'),
         ]);
 
-        return to_route('portal.enquiries.edit', $enquiry);
+        return to_route('portal.enquiries.edit', $enquiry)
+            ->with('success', 'Draft created. Add your artworks, then press “Send enquiry” on the Review & send step to send it to us.');
     }
 
     public function show(Request $request, Enquiry $enquiry): Response|RedirectResponse

@@ -19,6 +19,8 @@ class EstimateController extends Controller
     {
         Gate::authorize('view', $enquiry);
 
+        // Fields not listed here (e.g. image_rotation: turning the picture does not change the price)
+        // are accepted and ignored, so the editor can post its whole form.
         $data = $request->validate([
             'source_type' => ['required', 'in:catalog,custom_creation,own_artwork'],
             'artwork_id' => ['nullable', 'integer'],

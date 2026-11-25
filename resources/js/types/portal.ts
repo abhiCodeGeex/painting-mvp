@@ -55,6 +55,8 @@ export interface EnquiryLine {
     medium_id: number | null;
     substrate_id: number | null;
     edge_style: string | null;
+    /** Picture turned clockwise (0/90/180/270°); width_mm/height_mm stay the painting's own size (see hungSize). */
+    image_rotation?: number;
     frame_id: number | null;
     frame_advice_requested: boolean;
     mat_id: number | null;

@@ -1,7 +1,7 @@
 {
   "key": "living",
   "title": "Living room",
-  "faceSize": 1024,
+  "faceSize": 2048,
   "faces": {
     "f": {
       "dir": [
@@ -105,17 +105,247 @@
   "wallAlbedo": 0.8,
   "knee": 0.8,
   "exposure": [
-    0.6048,
-    1.1082,
-    1.9811
+    0.607,
+    1.1045,
+    1.9831
   ],
   "detail": {
     "file": "detail.webp",
     "mask": "detail-mask.webp",
-    "size": 2048,
+    "size": 4096,
     "u0": 0.264706,
     "u1": 0.735294,
     "v0": 0.332007,
     "v1": 0.802596
+  },
+  "layers": {
+    "empty": {
+      "faces": "<face>-empty.webp",
+      "mask": "<face>-empty-mask.webp",
+      "facesList": [
+        "f",
+        "r",
+        "b",
+        "l",
+        "d"
+      ],
+      "hasDetail": false,
+      "detailSkipped": true
+    },
+    "items": [
+      {
+        "key": "rug",
+        "label": "Rug",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-rug-f.webp",
+            "obj": "L-rug-f-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.296875
+            ]
+          },
+          "d": {
+            "file": "L-rug-d.webp",
+            "obj": "L-rug-d-obj.webp",
+            "rect": [
+              0.0,
+              0.794872,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "side_table",
+        "label": "Side table",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-side_table-f.webp",
+            "obj": "L-side_table-f-obj.webp",
+            "rect": [
+              0.559082,
+              0.176758,
+              0.966797,
+              0.431641
+            ]
+          }
+        }
+      },
+      {
+        "key": "cabinet",
+        "label": "Side cabinet",
+        "default": true,
+        "faces": {
+          "r": {
+            "file": "L-cabinet-r.webp",
+            "obj": "L-cabinet-r-obj.webp",
+            "rect": [
+              0.564453,
+              0.099121,
+              1.0,
+              0.47168
+            ]
+          }
+        }
+      },
+      {
+        "key": "sofa",
+        "label": "Sofa",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-sofa-f.webp",
+            "obj": "L-sofa-f-obj.webp",
+            "rect": [
+              0.047363,
+              0.108398,
+              0.952637,
+              0.487793
+            ]
+          }
+        }
+      },
+      {
+        "key": "sideboard",
+        "label": "Sideboard",
+        "default": false,
+        "faces": {
+          "b": {
+            "file": "L-sideboard-b.webp",
+            "obj": "L-sideboard-b-obj.webp",
+            "rect": [
+              0.0,
+              0.006348,
+              1.0,
+              0.535156
+            ]
+          }
+        }
+      },
+      {
+        "key": "plants",
+        "label": "Plants",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-plants-f.webp",
+            "obj": "L-plants-f-obj.webp",
+            "rect": [
+              0.0,
+              0.098145,
+              0.287598,
+              0.525879
+            ]
+          },
+          "b": {
+            "file": "L-plants-b.webp",
+            "obj": "L-plants-b-obj.webp",
+            "rect": [
+              0.777832,
+              0.023438,
+              1.0,
+              0.41748
+            ]
+          },
+          "l": {
+            "file": "L-plants-l.webp",
+            "obj": "L-plants-l-obj.webp",
+            "rect": [
+              0.0,
+              0.02002,
+              1.0,
+              0.532227
+            ]
+          }
+        }
+      },
+      {
+        "key": "coffee_table",
+        "label": "Coffee table",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-coffee_table-f.webp",
+            "obj": "L-coffee_table-f-obj.webp",
+            "rect": [
+              0.003418,
+              0.0,
+              0.996582,
+              0.306152
+            ]
+          },
+          "d": {
+            "file": "L-coffee_table-d.webp",
+            "obj": "L-coffee_table-d-obj.webp",
+            "rect": [
+              0.071062,
+              0.922344,
+              0.928938,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "armchair",
+        "label": "Armchair",
+        "default": false,
+        "faces": {
+          "l": {
+            "file": "L-armchair-l.webp",
+            "obj": "L-armchair-l-obj.webp",
+            "rect": [
+              0.463379,
+              0.0,
+              1.0,
+              0.471191
+            ]
+          },
+          "d": {
+            "file": "L-armchair-d.webp",
+            "obj": "L-armchair-d-obj.webp",
+            "rect": [
+              0.0,
+              0.49011,
+              0.169963,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "lounge_chair",
+        "label": "Lounge chair",
+        "default": true,
+        "faces": {
+          "r": {
+            "file": "L-lounge_chair-r.webp",
+            "obj": "L-lounge_chair-r-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.562988,
+              0.504395
+            ]
+          },
+          "d": {
+            "file": "L-lounge_chair-d.webp",
+            "obj": "L-lounge_chair-d-obj.webp",
+            "rect": [
+              0.776557,
+              0.438095,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    ]
   }
 }

@@ -1,4 +1,4 @@
-import { sizeLabel, type Unit } from '@/lib/units';
+import { mmToUnit, sizeLabel, type Unit } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { Icon } from '@/ui/icon';
 import {
@@ -10,13 +10,24 @@ import {
     ElementRef,
     inject,
     input,
+    linkedSignal,
+    output,
     signal,
     viewChild,
 } from '@angular/core';
 import { LoaderCircle, Maximize2 } from 'lucide';
 import { ArtworkLightbox } from './artwork-lightbox';
 import { FramedArt } from './framed-art';
-import { isLight, outerSize, type GlazingLook, type PreviewFrame, type PreviewMat, type WallPiece } from './preview-helpers';
+import {
+    isLight,
+    outerSize,
+    stageClass,
+    WALL_COLOURS,
+    type GlazingLook,
+    type PreviewFrame,
+    type PreviewMat,
+    type WallPiece,
+} from './preview-helpers';
 import { Room360 } from './room-360';
 import { WallPhoto } from './wall-photo';
 
@@ -44,7 +55,8 @@ function supportsWebGL(): boolean {
     imports: [Icon, FramedArt, Room360, WallPhoto, ArtworkLightbox],
     changeDetection: ChangeDetectionStrategy.OnPush,
     // The host is the flex item of the parent; with fillHeight it passes the free height on to the root.
-    host: { '[class]': "fillHeight() ? 'flex min-h-0 min-w-0 flex-col lg:flex-1' : 'block min-w-0'" },
+    // Its minimum height is its content's (the stage's minimum), so it never overlaps what follows it.
+    host: { '[class]': "fillHeight() ? 'flex min-w-0 flex-col lg:flex-1' : 'block min-w-0'" },
     template: `
         <div [class]="rootClass()">
             <div
@@ -72,10 +84,22 @@ function supportsWebGL(): boolean {
                 <!-- 16:10 stage (or the free height, with fillHeight), never shorter than 360 px; the room fills it. -->
                 <div [class]="stageClass()">
                     @defer (on immediate) {
-                        <room-360 class="absolute inset-0 block" height="h-full" [pieces]="pieces()" [wallColour]="wallColour()" />
+                        <room-360
+                            class="absolute inset-0 block"
+                            height="h-full"
+                            [pieces]="pieces()"
+                            [wallColour]="wall()"
+                            (wallChange)="setWall($event)"
+                        />
                     } @placeholder {
                         <div class="text-muted-foreground absolute inset-0 flex items-center justify-center gap-2 rounded-lg border text-sm">
                             <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Preparing the 360° room…
+                        </div>
+                    } @error {
+                        <div
+                            class="text-muted-foreground absolute inset-0 flex items-center justify-center rounded-lg border p-6 text-center text-sm"
+                        >
+                            Couldn’t load the 360° room — please reload the page.
                         </div>
                     }
                 </div>
@@ -84,29 +108,62 @@ function supportsWebGL(): boolean {
             @if (view() === 'photo') {
                 @defer (on immediate) {
                     <wall-photo
+                        [class]="photoClass()"
+                        [fill]="fillHeight()"
                         [imageUrl]="imageUrl()"
                         [widthMm]="w()"
                         [heightMm]="h()"
                         [frame]="frame()"
                         [mat]="mat()"
                         [depthMm]="depthMm()"
+                        [rotation]="rotation()"
                         [unit]="unit()"
                     />
+                } @placeholder {
+                    <div [class]="stageClass()">
+                        <div class="text-muted-foreground absolute inset-0 flex items-center justify-center gap-2 rounded-lg border text-sm">
+                            <svg [icon]="LoaderCircle" class="size-4 animate-spin" /> Loading…
+                        </div>
+                    </div>
+                } @error {
+                    <div [class]="stageClass()">
+                        <div
+                            class="text-muted-foreground absolute inset-0 flex items-center justify-center rounded-lg border p-6 text-center text-sm"
+                        >
+                            Couldn’t load this view — please reload the page.
+                        </div>
+                    </div>
                 }
             }
 
-            <div #box [class]="'w-full overflow-hidden rounded-lg border' + (view() === '360' || view() === 'photo' ? ' hidden' : '')">
+            <!-- Same stage as the 360° room, so switching tabs never jumps; the drawing is fitted inside it. -->
+            <div #box [class]="stageClass() + ' overflow-hidden rounded-lg border' + (view() === '360' || view() === 'photo' ? ' hidden' : '')">
                 @if (view() === 'room') {
-                    <div class="relative" [style.height.px]="(wallH() + floorMm) * scale()" [style.background]="wallColour()">
+                    <div class="absolute inset-0" [style.background]="wall()">
                         <!-- floor -->
                         <div
                             class="absolute inset-x-0 bottom-0"
                             [style.height.px]="floorMm * scale()"
                             style="background: linear-gradient(#a98463, #8a6a4f); border-top: 3px solid rgba(0, 0, 0, 0.12)"
                         ></div>
+                        <!-- the customer's own wall, when they gave its size -->
+                        @if (myWall(); as mw) {
+                            <div
+                                class="pointer-events-none absolute left-1/2 -translate-x-1/2 border-2 border-dashed"
+                                [class]="lightWall() ? 'border-black/35' : 'border-white/50'"
+                                [style.bottom.px]="floorMm * scale()"
+                                [style.width.px]="mw.width * scale()"
+                                [style.height.px]="mw.height * scale()"
+                            >
+                                <span
+                                    [class]="'absolute top-1 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap ' + (lightWall() ? 'text-black/55' : 'text-white/70')"
+                                    >Your wall · {{ myWallLabel() }}</span
+                                >
+                            </div>
+                        }
                         <!-- sofa for scale -->
                         <svg
-                            class="absolute left-1/2 -translate-x-1/2"
+                            [class]="'absolute left-1/2 -translate-x-1/2' + (showSofa() ? '' : ' hidden')"
                             [style.bottom.px]="floorMm * scale() * 0.55"
                             [style.width.px]="sofaWidth * scale()"
                             [style.height.px]="sofaHeight * scale()"
@@ -128,15 +185,16 @@ function supportsWebGL(): boolean {
                                 [frame]="frame()"
                                 [mat]="mat()"
                                 [depthMm]="depthMm()"
+                                [rotation]="rotation()"
                                 [scale]="scale()"
                             />
                         </div>
                         <span [class]="'absolute top-2 left-2 text-[10px] ' + (lightWall() ? 'text-black/50' : 'text-white/60')"
-                            >Sofa 2 m wide for scale</span
+                            >{{ showSofa() ? 'Sofa 2 m wide for scale' : 'Drawn to scale' }}</span
                         >
                     </div>
                 } @else if (view() === 'closeup') {
-                    <div class="flex items-center justify-center p-6" [style.background]="wallColour()" [style.min-height.px]="closeBox() + 48">
+                    <div class="absolute inset-0 flex items-center justify-center" [style.background]="wall()">
                         <framed-art
                             [imageUrl]="imageUrl()"
                             [widthMm]="w()"
@@ -144,10 +202,28 @@ function supportsWebGL(): boolean {
                             [frame]="frame()"
                             [mat]="mat()"
                             [depthMm]="depthMm()"
+                            [rotation]="rotation()"
                             [scale]="closeScale()"
                         />
                     </div>
                 }
+                <!-- Wall colour: the same swatches, in the same corner, as in the 360° room. -->
+                <div class="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-full bg-black/45 px-2 py-1.5 backdrop-blur-sm">
+                    @for (c of colours; track c.hex) {
+                        <button
+                            type="button"
+                            [attr.aria-label]="'Wall colour ' + c.name"
+                            [attr.aria-pressed]="wall().toLowerCase() === c.hex.toLowerCase()"
+                            [title]="c.name"
+                            [class]="
+                                'size-5 rounded-full border transition ' +
+                                (wall().toLowerCase() === c.hex.toLowerCase() ? 'scale-110 border-white ring-2 ring-white/70' : 'border-white/40')
+                            "
+                            [style.background]="c.hex"
+                            (click)="setWall(c.hex)"
+                        ></button>
+                    }
+                </div>
             </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2">
@@ -155,6 +231,9 @@ function supportsWebGL(): boolean {
                     Finished size ≈ <span class="text-foreground font-medium tabular-nums">{{ finishedLabel() }}</span>{{
                         quantity() > 1 ? ' · ×' + quantity() : ''
                     }}
+                    @if (fit(); as f) {
+                        <span [class]="f.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'"> · {{ f.text }}</span>
+                    }
                 </p>
                 @if (imageUrl()) {
                     <button
@@ -177,6 +256,7 @@ function supportsWebGL(): boolean {
             [frame]="frame()"
             [mat]="mat()"
             [depthMm]="depthMm()"
+            [rotation]="rotation()"
             [sizeLabel]="'Finished size ≈ ' + finishedLabel()"
         />
     `,
@@ -195,8 +275,19 @@ export class WallPreview {
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
     readonly edgeStyle = input<string | null>(null);
+    /** Picture turned clockwise (0/90/180/270°); widthMm/heightMm are already the turned piece's size. */
+    readonly rotation = input(0);
     readonly glazing = input<GlazingLook>('none');
     readonly wallColour = input.required<string>();
+    /** The wall colour picked on the preview's swatches (any tab): the page saves it with the artwork. */
+    readonly wallColourChange = output<string>();
+    /** The colour shown on every tab: follows the page, and a swatch tap changes it at once. */
+    protected wall = linkedSignal(() => this.wallColour() || '#EDE8E1');
+    protected readonly colours = WALL_COLOURS;
+    protected setWall(hex: string): void {
+        this.wall.set(hex);
+        this.wallColourChange.emit(hex);
+    }
     readonly wallWidthMm = input<number | null>(null);
     readonly wallHeightMm = input<number | null>(null);
     readonly unit = input<Unit>('cm');
@@ -216,11 +307,11 @@ export class WallPreview {
 
     private box = viewChild<ElementRef<HTMLDivElement>>('box');
     private containerWidth = signal(480);
+    private containerHeight = signal(300);
 
-    protected rootClass = computed(() => cn('flex min-w-0 flex-col gap-3', this.fillHeight() && 'lg:min-h-0 lg:flex-1', this.userClass()));
-    protected stageClass = computed(() =>
-        cn('relative aspect-[16/10] min-h-[340px] w-full sm:min-h-[360px]', this.fillHeight() && 'lg:aspect-auto lg:flex-1'),
-    );
+    protected rootClass = computed(() => cn('flex min-w-0 flex-col gap-3', this.fillHeight() && 'lg:flex-1', this.userClass()));
+    protected stageClass = computed(() => stageClass(this.fillHeight()));
+    protected photoClass = computed(() => cn('flex min-w-0 flex-col', this.fillHeight() && 'lg:flex-1'));
     protected w = computed(() => Math.max(50, this.widthMm() || 0));
     protected h = computed(() => Math.max(50, this.heightMm() || 0));
     /** The artwork as a one-piece list for the 3D room. */
@@ -236,23 +327,70 @@ export class WallPreview {
             depthMm: this.depthMm(),
             edgeStyle: this.edgeStyle(),
             glazing: this.glazing(),
+            rotation: this.rotation(),
         },
     ]);
     private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat()));
     protected finishedLabel = computed(() => sizeLabel(this.outer().width, this.outer().height, this.unit()));
 
+    /** The customer's wall (when they typed its width): drawn as a dashed outline with the piece on it. */
+    protected myWall = computed(() => {
+        const width = this.wallWidthMm() || 0;
+        if (width < 100) return null;
+        return { width, height: this.wallHeightMm() && this.wallHeightMm()! >= 100 ? this.wallHeightMm()! : 2600 };
+    });
+    protected myWallLabel = computed(() => {
+        const mw = this.myWall();
+        if (!mw) return '';
+        return this.wallHeightMm() ? sizeLabel(mw.width, mw.height, this.unit()) : `${this.len(mw.width)} wide`;
+    });
+    private len(mm: number): string {
+        return `${mmToUnit(mm, this.unit())} ${this.unit() === 'cm' ? 'cm' : 'in'}`;
+    }
+    /** The sofa only when it fits the customer's wall (or no wall size was given). */
+    protected showSofa = computed(() => !this.myWall() || this.myWall()!.width >= SOFA_WIDTH + 200);
+    /** Does the framed piece fit the customer's wall? Shown next to the finished size. */
+    protected fit = computed<{ ok: boolean; text: string } | null>(() => {
+        const mw = this.myWall();
+        if (!mw) return null;
+        const o = this.outer();
+        if (o.width > mw.width) return { ok: false, text: 'wider than your wall' };
+        if (this.wallHeightMm() && o.height > mw.height - 300) return { ok: false, text: 'too tall for your wall' };
+        const side = (mw.width - o.width) / 2;
+        if (side < 150) return { ok: false, text: 'a very tight fit on your wall' };
+        return { ok: true, text: `fits your wall, ${this.len(side)} each side` };
+    });
     // Wall is at least the given size, and always wide/tall enough to show the piece comfortably.
-    private wallW = computed(() => Math.max(this.wallWidthMm() || 3200, this.outer().width + 800, SOFA_WIDTH + 600));
-    protected wallH = computed(() => Math.max(this.wallHeightMm() || 2600, this.outer().height + SOFA_HEIGHT + 900));
-    protected scale = computed(() => this.containerWidth() / this.wallW());
+    private wallW = computed(() => {
+        const mw = this.myWall();
+        if (mw) return Math.max(mw.width + 600, this.outer().width + 600, this.showSofa() ? SOFA_WIDTH + 600 : 0);
+        return Math.max(3200, this.outer().width + 800, SOFA_WIDTH + 600);
+    });
+    protected wallH = computed(() => {
+        const mw = this.myWall();
+        if (mw) return Math.max(mw.height + 200, this.outer().height + 600);
+        return Math.max(this.wallHeightMm() || 2600, this.outer().height + SOFA_HEIGHT + 900);
+    });
+    // Fit the whole wall (floor to ceiling, sofa included) inside the box; the wall colour fills the rest.
+    protected scale = computed(() => Math.min(this.containerWidth() / this.wallW(), this.containerHeight() / (this.wallH() + this.floorMm)));
     // Hang with the centre at ~1500 mm, but keep at least 200 mm above the sofa back.
     protected bottomPx = computed(() => {
-        const centre = Math.max(1500, SOFA_HEIGHT + 200 + this.outer().height / 2);
+        const mw = this.myWall();
+        let centre = this.showSofa() ? Math.max(1500, SOFA_HEIGHT + 200 + this.outer().height / 2) : Math.max(1500, this.outer().height / 2 + 300);
+        // Never hang above the top of the customer's wall.
+        if (mw) centre = Math.max(this.outer().height / 2 + 100, Math.min(centre, mw.height - this.outer().height / 2 - 100));
         return (centre - this.outer().height / 2 + this.floorMm) * this.scale();
     });
-    protected lightWall = computed(() => isLight(this.wallColour()));
-    protected closeBox = computed(() => Math.min(this.containerWidth() - 48, 420));
-    protected closeScale = computed(() => this.closeBox() / Math.max(this.outer().width, this.outer().height));
+    protected lightWall = computed(() => isLight(this.wall()));
+    // Close-up: the whole framed piece fitted to the box with a 24 px margin (plus room for the shadow).
+    protected closeScale = computed(() =>
+        Math.min(
+            (this.containerWidth() - 48) / this.outer().width,
+            (this.containerHeight() - 64) / this.outer().height,
+            // Never blow a tiny piece up past ~4 px per mm.
+            4,
+        ),
+    );
 
     constructor() {
         const destroyRef = inject(DestroyRef);
@@ -260,8 +398,12 @@ export class WallPreview {
             const el = this.box()?.nativeElement;
             if (!el) return;
             const observer = new ResizeObserver(([entry]) => {
-                // A hidden box (3D view) reports 0: keep the last real width.
-                if (entry.contentRect.width > 0) this.containerWidth.set(Math.max(240, entry.contentRect.width));
+                // A hidden box (3D view) reports 0: keep the last real size.
+                const { width, height } = entry.contentRect;
+                if (width > 0 && height > 0) {
+                    this.containerWidth.set(Math.max(240, width));
+                    this.containerHeight.set(Math.max(200, height));
+                }
             });
             observer.observe(el);
             destroyRef.onDestroy(() => observer.disconnect());

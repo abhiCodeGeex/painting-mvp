@@ -6,20 +6,62 @@ import { UiDialog } from '@/ui/dialog';
 import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { InputError } from '@/ui/text';
-import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, model, signal, untracked } from '@angular/core';
-import { Brush, Frame as FrameIcon, Images, LoaderCircle } from 'lucide';
+import {
+    ChangeDetectionStrategy,
+    Component,
+    computed,
+    DestroyRef,
+    effect,
+    ElementRef,
+    inject,
+    input,
+    model,
+    signal,
+    untracked,
+    viewChild,
+} from '@angular/core';
+import { ArrowLeft, ArrowRight, Brush, Check, Frame as FrameIcon, Images, LoaderCircle, TriangleAlert } from 'lucide';
 import { CatalogPicker, ChoiceRow, FileGallery, PaletteInput, SizeFields } from './editor-parts';
 import { FramedArt } from './framed-art';
 import { initialLineForm, type LineForm } from './line-form';
-import { previewParts, WALL_COLOURS } from './preview-helpers';
+import { previewParts } from './preview-helpers';
 import { liveEstimate, PriceEstimateBox } from './price-estimate';
 import { WallPreview } from './wall-preview';
 
-const OPTION_TILE = 'flex flex-col items-center gap-2 rounded-lg border p-3 text-center transition';
+const OPTION_TILE = 'flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-center transition';
 const SWATCH = 'flex items-center gap-1.5 rounded-full border py-1 pr-3 pl-1 text-xs transition';
 /** Thin, token-coloured scrollbars (Firefox + Chromium) so stacked scroll areas stay quiet. */
 const THIN_SCROLL = '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]';
-const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-full text-xs';
+/** A quiet, full-width disclosure row: label left, current choice and a chevron right. */
+const DISCLOSURE =
+    'flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm select-none hover:bg-muted/60 [&::-webkit-details-marker]:hidden after:content-["›"] after:text-muted-foreground after:transition group-open:after:rotate-90';
+
+const STEPS = [
+    { n: 1, label: 'Artwork' },
+    { n: 2, label: 'Size' },
+    { n: 3, label: 'Materials' },
+    { n: 4, label: 'Frame' },
+    { n: 5, label: 'Wall & notes' },
+] as const;
+
+/**
+ * The form shows the piece as it hangs (a turned painting's width and height are swapped); the server keeps the
+ * painting's own size plus the rotation, so catalogue size prices and limits work unchanged.
+ */
+function unturnedSize(d: { width_mm: number; height_mm: number; image_rotation?: number; source_type?: string | null }): [number, number] {
+    const turned = d.source_type === 'catalog' && ((d.image_rotation ?? 0) / 90) % 2 === 1;
+    return turned ? [d.height_mm, d.width_mm] : [d.width_mm, d.height_mm];
+}
+
+/** Which step a validation error belongs to (by the field's name). */
+function stepOfField(key: string): number {
+    const k = key.split('.')[0];
+    if (['width_mm', 'height_mm', 'quantity', 'unit', 'size_reference', 'image_rotation'].includes(k)) return 2;
+    if (['quality_tier_id', 'medium_id', 'substrate_id', 'edge_style'].includes(k)) return 3;
+    if (['frame_id', 'frame_advice_requested', 'mat_id', 'mat_border_mm', 'glazing_id', 'finishing_ids'].includes(k)) return 4;
+    if (['placement', 'wall_width_mm', 'wall_height_mm', 'wall_colour', 'notes'].includes(k)) return 5;
+    return 1;
+}
 
 /**
  * Add or edit one artwork on a draft enquiry, with a live, true-to-scale wall preview.
@@ -45,365 +87,446 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
     template: `
         <ui-dialog
             [(open)]="open"
+            [beforeClose]="confirmClose"
             contentClass="flex h-dvh max-h-dvh w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[calc(100dvh-2rem)] sm:max-h-[60rem] sm:w-[calc(100vw-2rem)] sm:max-w-7xl sm:rounded-xl"
         >
             @if (open() && d().source_type) {
-                <div class="flex shrink-0 flex-col gap-1 border-b px-5 py-4 pr-12 sm:px-6">
-                    <h2 class="text-lg leading-none font-semibold tracking-tight">{{ line() ? 'Edit artwork' : 'Add an artwork' }}</h2>
-                    <p class="text-muted-foreground text-sm">Choose the artwork, size and framing — the preview updates as you go.</p>
+                <div class="flex shrink-0 flex-col gap-3 border-b px-5 pt-4 pr-12 pb-3 sm:px-6">
+                    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <h2 class="text-lg leading-none font-semibold tracking-tight">{{ line() ? 'Edit artwork' : 'Add an artwork' }}</h2>
+                        <p class="text-muted-foreground text-sm">The preview updates as you go.</p>
+                    </div>
+                    <!-- Step bar: one step on screen at a time; any step can be opened directly. -->
+                    <nav aria-label="Steps" [class]="'-mx-1 flex gap-1 overflow-x-auto px-1 pb-0.5 ' + thinScroll">
+                        @for (s of steps(); track s.n) {
+                            <button
+                                type="button"
+                                [attr.aria-current]="step() === s.n ? 'step' : null"
+                                [class]="
+                                    'flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition ' +
+                                    (step() === s.n
+                                        ? 'border-primary bg-primary text-primary-foreground'
+                                        : s.error
+                                          ? 'border-red-400 text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40'
+                                          : 'hover:bg-muted')
+                                "
+                                (click)="goTo(s.n)"
+                            >
+                                <span
+                                    [class]="
+                                        'flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ' +
+                                        (step() === s.n
+                                            ? 'bg-primary-foreground text-primary'
+                                            : s.error
+                                              ? 'bg-red-500 text-white'
+                                              : s.done
+                                                ? 'bg-emerald-600 text-white'
+                                                : 'bg-muted text-muted-foreground')
+                                    "
+                                >
+                                    @if (s.error) {
+                                        !
+                                    } @else if (s.done && step() !== s.n) {
+                                        <svg [icon]="Check" class="size-3" />
+                                    } @else {
+                                        {{ s.n }}
+                                    }
+                                </span>
+                                {{ s.label }}
+                            </button>
+                        }
+                    </nav>
                 </div>
 
-                <form class="flex min-h-0 flex-1 flex-col" (submit)="submit($event)">
+                <form class="flex min-h-0 flex-1 flex-col" (submit)="submit($event)" (keydown.enter)="enterNext($event)">
                     <!-- One scroll area on small screens; on large screens each column scrolls on its own and the preview stays put. -->
                     <div [class]="'min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-12 lg:overflow-hidden ' + thinScroll">
                         <!-- left: the form -->
-                        <div [class]="'space-y-10 px-5 py-6 sm:px-6 lg:col-span-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain ' + thinScroll">
-                            <section class="space-y-4">
-                                <h3 class="flex items-center gap-2 text-base font-semibold">
-                                    <span [class]="stepNumber">1</span>What would you like?
-                                </h3>
-                                <div class="grid gap-3 sm:grid-cols-3">
-                                    @for (s of sources; track s.value) {
-                                        <button
-                                            type="button"
-                                            [class]="
-                                                'flex items-center gap-3 rounded-xl border p-3 text-left transition sm:flex-col sm:items-start sm:gap-2 sm:p-4 ' +
-                                                (d().source_type === s.value ? 'border-primary ring-primary bg-primary/5 ring-2' : 'hover:bg-muted')
-                                            "
-                                            (click)="form.set('source_type', s.value)"
-                                        >
-                                            <svg [icon]="s.icon" class="size-6 shrink-0" />
-                                            <span class="grid gap-1">
-                                                <span class="text-sm leading-tight font-medium">{{ s.title }}</span>
-                                                <span class="text-muted-foreground text-xs leading-snug">{{ s.text }}</span>
-                                            </span>
-                                        </button>
-                                    }
-                                </div>
-                            </section>
+                        <div
+                            #stepPane
+                            [class]="'space-y-6 px-5 py-5 sm:px-6 lg:col-span-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain ' + thinScroll"
+                        >
+                            @if (step() === 1) {
+                                <section class="space-y-3">
+                                    <h3 class="text-base font-semibold">What would you like?</h3>
+                                    <!-- Compact segmented choice: one line, the explanation as a tooltip and below. -->
+                                    <div class="bg-muted/60 grid grid-cols-3 gap-1 rounded-xl p-1" role="radiogroup">
+                                        @for (s of sources; track s.value) {
+                                            <button
+                                                type="button"
+                                                role="radio"
+                                                [attr.aria-checked]="d().source_type === s.value"
+                                                [title]="s.text"
+                                                [class]="
+                                                    'flex flex-col items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-xs leading-tight font-medium transition sm:flex-row sm:gap-2 sm:px-2 sm:py-2 sm:text-sm ' +
+                                                    (d().source_type === s.value
+                                                        ? 'bg-background shadow-sm'
+                                                        : 'text-muted-foreground hover:text-foreground')
+                                                "
+                                                (click)="form.set('source_type', s.value)"
+                                            >
+                                                <svg [icon]="s.icon" class="size-4 shrink-0" />
+                                                <span class="text-center">{{ s.short }}</span>
+                                            </button>
+                                        }
+                                    </div>
+                                    <p class="text-muted-foreground text-xs">{{ sourceText() }}</p>
+                                </section>
 
-                            @switch (d().source_type) {
-                                @case ('catalog') {
-                                    <section class="space-y-4">
-                                        <h3 class="flex items-center gap-2 text-base font-semibold">
-                                            <span [class]="stepNumber">2</span>Choose an artwork
-                                        </h3>
-                                        <catalog-picker [options]="options()" [selectedId]="d().artwork_id" (selected)="chooseArtwork($event)" />
-                                        <input-error [message]="form.error('artwork_id')" />
-                                    </section>
-                                }
-                                @case ('custom_creation') {
-                                    <section class="space-y-4">
-                                        <h3 class="flex items-center gap-2 text-base font-semibold">
-                                            <span [class]="stepNumber">2</span>Tell us about the artwork
-                                        </h3>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Working title (optional)</label>
-                                            <input
-                                                ui-input
-                                                placeholder="e.g. Lobby triptych"
-                                                [value]="d().title"
-                                                (input)="form.set('title', $any($event.target).value)"
-                                            />
-                                        </div>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Describe what you would like</label>
-                                            <textarea
-                                                ui-textarea
-                                                rows="4"
-                                                placeholder="Subject, feeling, colours, anything that inspires you…"
-                                                [value]="d().brief.description"
-                                                (input)="setBrief('description', $any($event.target).value)"
-                                            ></textarea>
-                                            <input-error [message]="form.error('brief.description')" />
-                                        </div>
-                                        <div class="grid gap-4 sm:grid-cols-2">
+                                @switch (d().source_type) {
+                                    @case ('catalog') {
+                                        <section class="space-y-3">
+                                            <h3 class="text-base font-semibold">Choose an artwork</h3>
+                                            <catalog-picker [options]="options()" [selectedId]="d().artwork_id" (selected)="chooseArtwork($event)" />
+                                            <input-error [message]="form.error('artwork_id')" />
+                                        </section>
+                                    }
+                                    @case ('custom_creation') {
+                                        <section class="space-y-4">
+                                            <h3 class="text-base font-semibold">Tell us about the artwork</h3>
                                             <div class="grid gap-1.5">
-                                                <label ui-label>Style</label>
-                                                <select ui-select [value]="d().brief.style" (change)="setBrief('style', $any($event.target).value)">
-                                                    <option value="">No preference</option>
-                                                    @for (c of options().categories; track c) {
-                                                        <option [value]="c" [selected]="d().brief.style === c">
-                                                            @if (c.includes(' › ')) {
-                                                                &nbsp;&nbsp;↳ {{ c.split(' › ')[1] }}
-                                                            } @else {
-                                                                {{ c }}
-                                                            }
-                                                        </option>
-                                                    }
-                                                </select>
-                                            </div>
-                                            <div class="grid gap-1.5">
-                                                <label ui-label>Mood words (comma separated)</label>
+                                                <label ui-label>Working title (optional)</label>
                                                 <input
                                                     ui-input
-                                                    placeholder="calm, warm, bold"
-                                                    [value]="d().brief.mood.join(', ')"
-                                                    (blur)="setMood($any($event.target).value)"
+                                                    placeholder="e.g. Lobby triptych"
+                                                    [value]="d().title"
+                                                    (input)="form.set('title', $any($event.target).value)"
                                                 />
                                             </div>
-                                        </div>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Colour palette (up to 6)</label>
-                                            <palette-input
-                                                [value]="d().brief.palette"
-                                                [wall]="d().wall_colour"
-                                                (changed)="setBrief('palette', $event)"
-                                            />
-                                        </div>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Where will it be displayed?</label>
-                                            <choice-row
-                                                [value]="d().brief.usage_rights"
-                                                [options]="options().enums.usage_rights"
-                                                (changed)="setBrief('usage_rights', $event)"
-                                            />
-                                            <input-error [message]="form.error('brief.usage_rights')" />
-                                        </div>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Sketches or reference images</label>
-                                            <file-gallery
-                                                [existing]="existingReferences()"
-                                                [added]="d().references"
-                                                [multiple]="true"
-                                                [removableExisting]="true"
-                                                (add)="form.set('references', [...d().references, ...$event].slice(0, 10))"
-                                                (removeAdded)="form.set('references', without(d().references, $event))"
-                                                (removeExisting)="form.set('remove_media', [...d().remove_media, $event])"
-                                            />
-                                            <input-error [message]="form.error('references')" />
-                                        </div>
-                                    </section>
-                                }
-                                @case ('own_artwork') {
-                                    <section class="space-y-4">
-                                        <h3 class="flex items-center gap-2 text-base font-semibold">
-                                            <span [class]="stepNumber">2</span>Your artwork
-                                        </h3>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>What should we do?</label>
-                                            <choice-row
-                                                [value]="d().own.service"
-                                                [options]="options().enums.own_services"
-                                                (changed)="setOwn('service', $event)"
-                                            />
-                                            <input-error [message]="form.error('own.service')" />
-                                        </div>
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Photo of the artwork</label>
-                                            <file-gallery
-                                                [existing]="line()?.artwork_photo ? [line()!.artwork_photo!] : []"
-                                                [added]="d().artwork_photo ? [d().artwork_photo!] : []"
-                                                (add)="form.set('artwork_photo', $event.length ? $event[0] : null)"
-                                                (removeAdded)="form.set('artwork_photo', null)"
-                                            />
-                                            <input-error [message]="form.error('artwork_photo')" />
-                                        </div>
-                                        @if (d().own.service === 'reproduce_and_frame') {
                                             <div class="grid gap-1.5">
-                                                <label ui-label>High-resolution file for printing (optional now)</label>
-                                                <file-gallery
-                                                    accept=".jpg,.jpeg,.png,.tif,.tiff,.pdf,.psd,.ai"
-                                                    [existing]="line()?.hi_res ? [line()!.hi_res!] : []"
-                                                    [added]="d().hi_res ? [d().hi_res!] : []"
-                                                    (add)="form.set('hi_res', $event.length ? $event[0] : null)"
-                                                    (removeAdded)="form.set('hi_res', null)"
-                                                />
-                                                <p class="text-muted-foreground text-xs">TIFF, PNG, JPG or PDF up to 200 MB.</p>
-                                                <input-error [message]="form.error('hi_res')" />
+                                                <label ui-label>Describe what you would like</label>
+                                                <textarea
+                                                    ui-textarea
+                                                    rows="4"
+                                                    placeholder="Subject, feeling, colours, anything that inspires you…"
+                                                    [value]="d().brief.description"
+                                                    (input)="setBrief('description', $any($event.target).value)"
+                                                ></textarea>
+                                                <input-error [message]="form.error('brief.description')" />
                                             </div>
-                                        }
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Condition notes (optional)</label>
-                                            <textarea
-                                                ui-textarea
-                                                rows="2"
-                                                placeholder="e.g. Rolled canvas, slight crease at the corner"
-                                                [value]="d().own.condition_notes"
-                                                (input)="setOwn('condition_notes', $any($event.target).value)"
-                                            ></textarea>
-                                        </div>
-                                        <label class="flex items-start gap-3 text-sm">
-                                            <ui-checkbox [checked]="d().rights_confirmed" (checkedChange)="form.set('rights_confirmed', $event)" />
-                                            <span>I own the rights to this image or have permission to reproduce it.</span>
-                                        </label>
-                                        <input-error [message]="form.error('rights_confirmed')" />
-                                    </section>
+                                            <div class="grid gap-4 sm:grid-cols-2">
+                                                <div class="grid gap-1.5">
+                                                    <label ui-label>Style</label>
+                                                    <select
+                                                        ui-select
+                                                        [value]="d().brief.style"
+                                                        (change)="setBrief('style', $any($event.target).value)"
+                                                    >
+                                                        <option value="">No preference</option>
+                                                        @for (c of options().categories; track c) {
+                                                            <option [value]="c" [selected]="d().brief.style === c">
+                                                                @if (c.includes(' › ')) {
+                                                                    &nbsp;&nbsp;↳ {{ c.split(' › ')[1] }}
+                                                                } @else {
+                                                                    {{ c }}
+                                                                }
+                                                            </option>
+                                                        }
+                                                    </select>
+                                                </div>
+                                                <div class="grid gap-1.5">
+                                                    <label ui-label>Mood words (comma separated)</label>
+                                                    <input
+                                                        ui-input
+                                                        placeholder="calm, warm, bold"
+                                                        [value]="d().brief.mood.join(', ')"
+                                                        (blur)="setMood($any($event.target).value)"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div class="grid gap-1.5">
+                                                <label ui-label>Colour palette (up to 6)</label>
+                                                <palette-input
+                                                    [value]="d().brief.palette"
+                                                    [wall]="d().wall_colour"
+                                                    (changed)="setBrief('palette', $event)"
+                                                />
+                                            </div>
+                                            <div class="grid gap-1.5">
+                                                <label ui-label>Where will it be displayed?</label>
+                                                <choice-row
+                                                    [value]="d().brief.usage_rights"
+                                                    [options]="options().enums.usage_rights"
+                                                    (changed)="setBrief('usage_rights', $event)"
+                                                />
+                                                <input-error [message]="form.error('brief.usage_rights')" />
+                                            </div>
+                                            <div class="grid gap-1.5">
+                                                <label ui-label>Sketches or reference images</label>
+                                                <file-gallery
+                                                    [existing]="existingReferences()"
+                                                    [added]="d().references"
+                                                    [multiple]="true"
+                                                    [removableExisting]="true"
+                                                    (add)="form.set('references', [...d().references, ...$event].slice(0, 10))"
+                                                    (removeAdded)="form.set('references', without(d().references, $event))"
+                                                    (removeExisting)="form.set('remove_media', [...d().remove_media, $event])"
+                                                />
+                                                <input-error [message]="form.error('references')" />
+                                            </div>
+                                        </section>
+                                    }
+                                    @case ('own_artwork') {
+                                        <section class="space-y-4">
+                                            <h3 class="text-base font-semibold">Your artwork</h3>
+                                            <div class="grid gap-1.5">
+                                                <label ui-label>What should we do?</label>
+                                                <choice-row
+                                                    [value]="d().own.service"
+                                                    [options]="options().enums.own_services"
+                                                    (changed)="setOwn('service', $event)"
+                                                />
+                                                <input-error [message]="form.error('own.service')" />
+                                            </div>
+                                            <div class="grid gap-1.5">
+                                                <label ui-label>Photo of the artwork</label>
+                                                <file-gallery
+                                                    [existing]="line()?.artwork_photo ? [line()!.artwork_photo!] : []"
+                                                    [added]="d().artwork_photo ? [d().artwork_photo!] : []"
+                                                    (add)="form.set('artwork_photo', $event.length ? $event[0] : null)"
+                                                    (removeAdded)="form.set('artwork_photo', null)"
+                                                />
+                                                <input-error [message]="form.error('artwork_photo')" />
+                                            </div>
+                                            @if (d().own.service === 'reproduce_and_frame') {
+                                                <div class="grid gap-1.5">
+                                                    <label ui-label>High-resolution file for printing (optional now)</label>
+                                                    <file-gallery
+                                                        accept=".jpg,.jpeg,.png,.tif,.tiff,.pdf,.psd,.ai"
+                                                        [existing]="line()?.hi_res ? [line()!.hi_res!] : []"
+                                                        [added]="d().hi_res ? [d().hi_res!] : []"
+                                                        (add)="form.set('hi_res', $event.length ? $event[0] : null)"
+                                                        (removeAdded)="form.set('hi_res', null)"
+                                                    />
+                                                    <p class="text-muted-foreground text-xs">TIFF, PNG, JPG or PDF up to 200 MB.</p>
+                                                    <input-error [message]="form.error('hi_res')" />
+                                                </div>
+                                            }
+                                            <div class="grid gap-1.5">
+                                                <label ui-label>Condition notes (optional)</label>
+                                                <textarea
+                                                    ui-textarea
+                                                    rows="2"
+                                                    placeholder="e.g. Rolled canvas, slight crease at the corner"
+                                                    [value]="d().own.condition_notes"
+                                                    (input)="setOwn('condition_notes', $any($event.target).value)"
+                                                ></textarea>
+                                            </div>
+                                            <label class="flex items-start gap-3 text-sm">
+                                                <ui-checkbox
+                                                    [checked]="d().rights_confirmed"
+                                                    (checkedChange)="form.set('rights_confirmed', $event)"
+                                                />
+                                                <span>I own the rights to this image or have permission to reproduce it.</span>
+                                            </label>
+                                            <input-error [message]="form.error('rights_confirmed')" />
+                                        </section>
+                                    }
                                 }
                             }
 
-                            <section class="space-y-4">
-                                <h3 class="flex items-center gap-2 text-base font-semibold"><span [class]="stepNumber">3</span>Size & quantity</h3>
-                                <size-fields [form]="form" [artwork]="d().source_type === 'catalog' ? artwork() : null" [options]="options()" />
-                                <input-error [message]="form.error('width_mm') ?? form.error('height_mm')" />
-                            </section>
+                            @if (step() === 2) {
+                                <section class="space-y-4">
+                                    <h3 class="text-base font-semibold">Size & quantity</h3>
+                                    <size-fields [form]="form" [artwork]="d().source_type === 'catalog' ? artwork() : null" [options]="options()" />
+                                    <input-error [message]="form.error('width_mm') ?? form.error('height_mm') ?? form.error('image_rotation')" />
+                                    <input-error [message]="form.error('quantity')" />
+                                </section>
+                            }
 
-                            <section class="space-y-4">
-                                <h3 class="flex items-center gap-2 text-base font-semibold">
-                                    <span [class]="stepNumber">4</span>Quality & materials
-                                </h3>
-                                <div class="grid gap-1.5">
-                                    <label ui-label>Quality</label>
-                                    <div class="grid gap-2 sm:grid-cols-3">
-                                        @for (t of options().quality_tiers; track t.id) {
-                                            <button
-                                                type="button"
-                                                [class]="
-                                                    'rounded-lg border p-3 text-left text-sm transition ' +
-                                                    (d().quality_tier_id === t.id ? 'border-primary ring-primary ring-2' : 'hover:bg-muted')
-                                                "
-                                                (click)="applyTier(t.id)"
-                                            >
-                                                <div class="font-medium">{{ t.name }}</div>
-                                                <div class="text-muted-foreground text-xs">{{ t.description }}</div>
-                                            </button>
-                                        }
-                                    </div>
-                                </div>
-                                <div class="grid gap-4 sm:grid-cols-2">
+                            @if (step() === 3) {
+                                <section class="space-y-4">
+                                    <h3 class="text-base font-semibold">Quality & materials</h3>
                                     <div class="grid gap-1.5">
-                                        <label ui-label>Medium</label>
-                                        <select ui-select (change)="setId('medium_id', $any($event.target).value)">
-                                            <option value="" [selected]="!d().medium_id">Not sure — advise me</option>
-                                            @for (m of mediums(); track m.id) {
-                                                <option [value]="m.id" [selected]="d().medium_id === m.id">{{ m.name }}</option>
-                                            }
-                                        </select>
-                                        <input-error [message]="form.error('medium_id')" />
-                                    </div>
-                                    <div class="grid gap-1.5">
-                                        <label ui-label>Surface</label>
-                                        <select ui-select (change)="setId('substrate_id', $any($event.target).value)">
-                                            <option value="" [selected]="!d().substrate_id">Not sure — advise me</option>
-                                            @for (s of substrates(); track s.id) {
-                                                <option [value]="s.id" [selected]="d().substrate_id === s.id">{{ s.name }}</option>
-                                            }
-                                        </select>
-                                        <input-error [message]="form.error('substrate_id')" />
-                                    </div>
-                                </div>
-                                @if (edgeOptions().length > 0) {
-                                    <div class="grid gap-1.5">
-                                        <label ui-label>Canvas edges</label>
-                                        <choice-row
-                                            [value]="d().edge_style ?? ''"
-                                            [options]="edgeOptions()"
-                                            (changed)="form.set('edge_style', $event)"
-                                        />
-                                    </div>
-                                }
-                            </section>
-
-                            <section class="space-y-4">
-                                <h3 class="flex items-center gap-2 text-base font-semibold"><span [class]="stepNumber">5</span>Framing</h3>
-                                <div class="grid gap-1.5">
-                                    <label ui-label>Frame</label>
-                                    <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                                        <button
-                                            type="button"
-                                            [class]="tile(!d().frame_id && !d().frame_advice_requested)"
-                                            (click)="setFrame(null, false)"
-                                        >
-                                            <span class="flex h-14 items-center justify-center">
-                                                <span
-                                                    class="block h-12 w-9 rounded-sm"
-                                                    style="background: linear-gradient(135deg, #f6d365, #a1c4fd)"
-                                                ></span>
-                                            </span>
-                                            <span class="text-xs leading-tight font-medium">No frame</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            [class]="tile(d().frame_advice_requested && !d().frame_id)"
-                                            (click)="setFrame(null, true)"
-                                        >
-                                            <span class="flex h-14 items-center justify-center"
-                                                ><span class="text-muted-foreground flex h-12 items-center text-2xl">?</span></span
-                                            >
-                                            <span class="text-xs leading-tight font-medium">Advise me</span>
-                                        </button>
-                                        @for (f of frames(); track f.id) {
-                                            <button type="button" [class]="tile(d().frame_id === f.id)" (click)="setFrame(f.id, false)">
-                                                <span class="flex h-14 items-center justify-center">
-                                                    <framed-art
-                                                        [imageUrl]="null"
-                                                        [widthMm]="300"
-                                                        [heightMm]="400"
-                                                        [frame]="{
-                                                            colour: f.colour,
-                                                            width_mm: f.width_mm,
-                                                            finish: f.finish,
-                                                            strip_url: f.strip_url ?? null,
-                                                            strip_face_mm: f.strip_face_mm ?? null,
-                                                        }"
-                                                        [mat]="null"
-                                                        [scale]="48 / (400 + 2 * f.width_mm)"
-                                                    />
-                                                </span>
-                                                <span class="text-xs leading-tight font-medium">{{ f.name }}</span>
-                                                <span class="text-muted-foreground -mt-1 text-[11px]">{{ f.width_mm }} mm · {{ f.material }}</span>
-                                            </button>
-                                        }
-                                    </div>
-                                    <input-error [message]="form.error('frame_id')" />
-                                </div>
-
-                                @if (matsAllowed()) {
-                                    <div class="grid gap-1.5">
-                                        <label ui-label>Mat (border inside the frame)</label>
-                                        <div class="flex flex-wrap items-center gap-2">
-                                            <button type="button" title="None" [class]="swatch(!d().mat_id)" (click)="form.set('mat_id', null)">
-                                                <span
-                                                    class="size-6 rounded-full border"
-                                                    style="background: repeating-linear-gradient(45deg, #ddd 0 4px, #fff 4px 8px)"
-                                                ></span>
-                                                None
-                                            </button>
-                                            @for (m of options().mats; track m.id) {
+                                        <label ui-label>Quality</label>
+                                        <div class="grid gap-2 sm:grid-cols-3">
+                                            @for (t of options().quality_tiers; track t.id) {
                                                 <button
                                                     type="button"
-                                                    [title]="m.name"
-                                                    [class]="swatch(d().mat_id === m.id)"
-                                                    (click)="form.set('mat_id', m.id)"
+                                                    [class]="
+                                                        'rounded-lg border p-3 text-left text-sm transition ' +
+                                                        (d().quality_tier_id === t.id ? 'border-primary ring-primary ring-2' : 'hover:bg-muted')
+                                                    "
+                                                    (click)="applyTier(t.id)"
                                                 >
-                                                    <span class="size-6 rounded-full border" [style.background]="m.colour"></span>
-                                                    {{ m.name }}
+                                                    <div class="font-medium">{{ t.name }}</div>
+                                                    <div class="text-muted-foreground text-xs">{{ t.description }}</div>
                                                 </button>
                                             }
-                                            @if (d().mat_id) {
-                                                <div class="flex items-center gap-2 text-sm">
-                                                    <span class="text-muted-foreground">Border</span>
-                                                    <input
-                                                        ui-input
-                                                        type="number"
-                                                        class="w-20"
-                                                        min="1"
-                                                        [value]="matBorderText()"
-                                                        (input)="setMatBorder($any($event.target).value)"
-                                                    />
-                                                    <span class="text-muted-foreground">{{ d().unit === 'cm' ? 'cm' : 'in' }}</span>
-                                                </div>
+                                        </div>
+                                    </div>
+                                    <div class="grid gap-4 sm:grid-cols-2">
+                                        <div class="grid gap-1.5">
+                                            <label ui-label>Medium</label>
+                                            <select ui-select (change)="setId('medium_id', $any($event.target).value)">
+                                                <option value="" [selected]="!d().medium_id">Not sure — advise me</option>
+                                                @for (m of mediums(); track m.id) {
+                                                    <option [value]="m.id" [selected]="d().medium_id === m.id">{{ m.name }}</option>
+                                                }
+                                            </select>
+                                            <input-error [message]="form.error('medium_id')" />
+                                        </div>
+                                        <div class="grid gap-1.5">
+                                            <label ui-label>Surface</label>
+                                            <select ui-select (change)="setId('substrate_id', $any($event.target).value)">
+                                                <option value="" [selected]="!d().substrate_id">Not sure — advise me</option>
+                                                @for (s of substrates(); track s.id) {
+                                                    <option [value]="s.id" [selected]="d().substrate_id === s.id">{{ s.name }}</option>
+                                                }
+                                            </select>
+                                            <input-error [message]="form.error('substrate_id')" />
+                                        </div>
+                                    </div>
+                                    @if (edgeOptions().length > 0) {
+                                        <div class="grid gap-1.5">
+                                            <label ui-label>Canvas edges</label>
+                                            <choice-row
+                                                [value]="d().edge_style ?? ''"
+                                                [options]="edgeOptions()"
+                                                (changed)="form.set('edge_style', $event)"
+                                            />
+                                        </div>
+                                    }
+                                </section>
+                            }
+
+                            @if (step() === 4) {
+                                <section class="space-y-4">
+                                    <h3 class="text-base font-semibold">Frame</h3>
+                                    <div class="grid gap-1.5">
+                                        <div class="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                                            <button
+                                                type="button"
+                                                [class]="tile(!d().frame_id && !d().frame_advice_requested)"
+                                                (click)="setFrame(null, false)"
+                                            >
+                                                <span class="flex h-11 items-center justify-center">
+                                                    <span
+                                                        class="block h-10 w-7 rounded-sm"
+                                                        style="background: linear-gradient(135deg, #f6d365, #a1c4fd)"
+                                                    ></span>
+                                                </span>
+                                                <span class="text-xs leading-tight font-medium">No frame</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                [class]="tile(d().frame_advice_requested && !d().frame_id)"
+                                                (click)="setFrame(null, true)"
+                                            >
+                                                <span class="flex h-11 items-center justify-center"
+                                                    ><span class="text-muted-foreground flex h-10 items-center text-xl">?</span></span
+                                                >
+                                                <span class="text-xs leading-tight font-medium">Advise me</span>
+                                            </button>
+                                            @for (f of frames(); track f.id) {
+                                                <button type="button" [class]="tile(d().frame_id === f.id)" (click)="setFrame(f.id, false)">
+                                                    <span class="flex h-11 items-center justify-center">
+                                                        <framed-art
+                                                            [imageUrl]="null"
+                                                            [widthMm]="300"
+                                                            [heightMm]="400"
+                                                            [frame]="{
+                                                                colour: f.colour,
+                                                                width_mm: f.width_mm,
+                                                                finish: f.finish,
+                                                                strip_url: f.strip_url ?? null,
+                                                                strip_face_mm: f.strip_face_mm ?? null,
+                                                            }"
+                                                            [mat]="null"
+                                                            [scale]="40 / (400 + 2 * f.width_mm)"
+                                                        />
+                                                    </span>
+                                                    <span class="text-xs leading-tight font-medium">{{ f.name }}</span>
+                                                    <span class="text-muted-foreground -mt-1 text-[11px]"
+                                                        >{{ f.width_mm }} mm · {{ f.material }}</span
+                                                    >
+                                                </button>
                                             }
                                         </div>
-                                        <input-error [message]="form.error('mat_id')" />
+                                        <input-error [message]="form.error('frame_id')" />
                                     </div>
-                                }
 
-                                <div class="grid gap-4 sm:grid-cols-2">
-                                    <div class="grid gap-1.5">
-                                        <label ui-label>Glass / glazing</label>
-                                        <select ui-select (change)="setId('glazing_id', $any($event.target).value)">
-                                            <option value="" [selected]="!d().glazing_id">Not sure — advise me</option>
-                                            @for (g of glazings(); track g.id) {
-                                                <option [value]="g.id" [selected]="d().glazing_id === g.id">{{ g.name }}</option>
-                                            }
-                                        </select>
-                                        <input-error [message]="form.error('glazing_id')" />
-                                    </div>
+                                    @if (unframed()) {
+                                        <p class="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs">
+                                            Glass and a mat come with a frame. Pick a frame or “Advise me” to add them.
+                                        </p>
+                                    }
+                                    @if (matsAllowed() && !unframed()) {
+                                        <details class="group rounded-lg border" [open]="!!d().mat_id || !!form.error('mat_id') || !!form.error('mat_border_mm')">
+                                            <summary [class]="disclosure">
+                                                <span class="font-medium">Mat</span>
+                                                <span class="text-muted-foreground truncate text-xs">{{ matSummary() }}</span>
+                                            </summary>
+                                            <div class="grid gap-1.5 border-t p-3">
+                                                <p class="text-muted-foreground text-xs">A border inside the frame, around the picture.</p>
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        title="None"
+                                                        [class]="swatch(!d().mat_id)"
+                                                        (click)="form.set('mat_id', null)"
+                                                    >
+                                                        <span
+                                                            class="size-6 rounded-full border"
+                                                            style="background: repeating-linear-gradient(45deg, #ddd 0 4px, #fff 4px 8px)"
+                                                        ></span>
+                                                        None
+                                                    </button>
+                                                    @for (m of options().mats; track m.id) {
+                                                        <button
+                                                            type="button"
+                                                            [title]="m.name"
+                                                            [class]="swatch(d().mat_id === m.id)"
+                                                            (click)="form.set('mat_id', m.id)"
+                                                        >
+                                                            <span class="size-6 rounded-full border" [style.background]="m.colour"></span>
+                                                            {{ m.name }}
+                                                        </button>
+                                                    }
+                                                    @if (d().mat_id) {
+                                                        <div class="flex items-center gap-2 text-sm">
+                                                            <span class="text-muted-foreground">Border</span>
+                                                            <input
+                                                                ui-input
+                                                                type="number"
+                                                                class="w-20"
+                                                                min="1"
+                                                                [value]="matBorderText()"
+                                                                (input)="setMatBorder($any($event.target).value)"
+                                                            />
+                                                            <span class="text-muted-foreground">{{ d().unit === 'cm' ? 'cm' : 'in' }}</span>
+                                                        </div>
+                                                    }
+                                                </div>
+                                                <input-error [message]="form.error('mat_id') ?? form.error('mat_border_mm')" />
+                                            </div>
+                                        </details>
+                                    }
+
+                                    @if (!unframed()) {
+                                    <details class="group rounded-lg border" [open]="!!form.error('glazing_id')">
+                                        <summary [class]="disclosure">
+                                            <span class="font-medium">Glass</span>
+                                            <span class="text-muted-foreground truncate text-xs">{{ glazingSummary() }}</span>
+                                        </summary>
+                                        <div class="grid gap-1.5 border-t p-3">
+                                            <select ui-select aria-label="Glass" (change)="setId('glazing_id', $any($event.target).value)">
+                                                <option value="" [selected]="!d().glazing_id">Not sure — advise me</option>
+                                                @for (g of glazings(); track g.id) {
+                                                    <option [value]="g.id" [selected]="d().glazing_id === g.id">{{ g.name }}</option>
+                                                }
+                                            </select>
+                                            <input-error [message]="form.error('glazing_id')" />
+                                        </div>
+                                    </details>
+                                    }
                                     @if (finishings().length > 0) {
-                                        <div class="grid gap-1.5">
-                                            <label ui-label>Hanging & finishing</label>
-                                            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                        <details class="group rounded-lg border">
+                                            <summary [class]="disclosure">
+                                                <span class="font-medium">Hanging & finishing</span>
+                                                <span class="text-muted-foreground truncate text-xs">{{ finishingSummary() }}</span>
+                                            </summary>
+                                            <div class="grid grid-cols-2 gap-2 border-t p-3 sm:grid-cols-3">
                                                 @for (f of finishings(); track f.id) {
                                                     <label
                                                         class="group relative cursor-pointer overflow-hidden rounded-lg border text-sm transition"
@@ -434,88 +557,88 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                                     </label>
                                                 }
                                             </div>
-                                        </div>
+                                        </details>
                                     }
-                                </div>
-                            </section>
+                                </section>
+                            }
 
-                            <section class="space-y-4">
-                                <h3 class="flex items-center gap-2 text-base font-semibold">
-                                    <span [class]="stepNumber">6</span>Where will it hang?
-                                </h3>
-                                <div class="grid gap-1.5">
-                                    <label ui-label>Wall colour</label>
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        @for (c of wallColours; track c.hex) {
-                                            <button
-                                                type="button"
-                                                [title]="c.name"
-                                                [class]="swatch(d().wall_colour === c.hex)"
-                                                (click)="form.set('wall_colour', c.hex)"
-                                            >
-                                                <span class="size-6 rounded-full border" [style.background]="c.hex"></span>
-                                                {{ c.name }}
-                                            </button>
+                            @if (step() === 5) {
+                                <!-- Review: everything chosen so far; each row opens its step. -->
+                                <section class="space-y-2">
+                                    <h3 class="text-base font-semibold">Your choices</h3>
+                                    <ul class="divide-y rounded-lg border text-sm">
+                                        @for (r of review(); track r.label) {
+                                            <li>
+                                                <button
+                                                    type="button"
+                                                    class="hover:bg-muted flex w-full items-center gap-3 px-3 py-2 text-left"
+                                                    (click)="goTo(r.step)"
+                                                >
+                                                    <span class="text-muted-foreground w-20 shrink-0 text-xs">{{ r.label }}</span>
+                                                    <span [class]="'min-w-0 flex-1 truncate ' + (r.missing ? 'text-amber-700 dark:text-amber-300' : '')">{{
+                                                        r.value
+                                                    }}</span>
+                                                    <span class="text-muted-foreground text-xs">Edit</span>
+                                                </button>
+                                            </li>
                                         }
-                                        <label class="flex items-center gap-1 text-xs">
+                                    </ul>
+                                </section>
+                                <section class="space-y-4">
+                                    <h3 class="text-base font-semibold">Where will it hang?</h3>
+                                    <p class="text-muted-foreground -mt-2 text-xs">
+                                        Optional — helps us check the size and suggest framing. Pick the wall colour right on the preview.
+                                    </p>
+                                    <div class="grid gap-4 sm:grid-cols-3">
+                                        <div class="grid gap-1.5">
+                                            <label ui-label>Room / placement</label>
                                             <input
-                                                type="color"
-                                                class="size-8 cursor-pointer rounded border"
-                                                [value]="d().wall_colour"
-                                                (input)="form.set('wall_colour', $any($event.target).value.toUpperCase())"
+                                                ui-input
+                                                placeholder="e.g. Living room, above sofa"
+                                                [value]="d().placement"
+                                                (input)="form.set('placement', $any($event.target).value)"
                                             />
-                                            Custom
-                                        </label>
+                                        </div>
+                                        <div class="grid gap-1.5">
+                                            <label ui-label>Wall width ({{ d().unit === 'cm' ? 'cm' : 'in' }}, optional)</label>
+                                            <input
+                                                ui-input
+                                                type="number"
+                                                min="0"
+                                                [value]="toUnit(d().wall_width_mm)"
+                                                (input)="setWall('wall_width_mm', $any($event.target).value)"
+                                            />
+                                            <input-error [message]="form.error('wall_width_mm')" />
+                                        </div>
+                                        <div class="grid gap-1.5">
+                                            <label ui-label>Wall height ({{ d().unit === 'cm' ? 'cm' : 'in' }}, optional)</label>
+                                            <input
+                                                ui-input
+                                                type="number"
+                                                min="0"
+                                                [value]="toUnit(d().wall_height_mm)"
+                                                (input)="setWall('wall_height_mm', $any($event.target).value)"
+                                            />
+                                            <input-error [message]="form.error('wall_height_mm')" />
+                                        </div>
                                     </div>
-                                    <p class="text-muted-foreground text-xs">Used for the preview only.</p>
-                                </div>
-                                <div class="grid gap-4 sm:grid-cols-3">
                                     <div class="grid gap-1.5">
-                                        <label ui-label>Room / placement</label>
-                                        <input
-                                            ui-input
-                                            placeholder="e.g. Living room, above sofa"
-                                            [value]="d().placement"
-                                            (input)="form.set('placement', $any($event.target).value)"
-                                        />
+                                        <label ui-label>Anything else we should know? (optional)</label>
+                                        <textarea
+                                            ui-textarea
+                                            rows="2"
+                                            [value]="d().notes"
+                                            (input)="form.set('notes', $any($event.target).value)"
+                                        ></textarea>
                                     </div>
-                                    <div class="grid gap-1.5">
-                                        <label ui-label>Wall width ({{ d().unit === 'cm' ? 'cm' : 'in' }}, optional)</label>
-                                        <input
-                                            ui-input
-                                            type="number"
-                                            min="0"
-                                            [value]="toUnit(d().wall_width_mm)"
-                                            (input)="setWall('wall_width_mm', $any($event.target).value)"
-                                        />
-                                    </div>
-                                    <div class="grid gap-1.5">
-                                        <label ui-label>Wall height ({{ d().unit === 'cm' ? 'cm' : 'in' }}, optional)</label>
-                                        <input
-                                            ui-input
-                                            type="number"
-                                            min="0"
-                                            [value]="toUnit(d().wall_height_mm)"
-                                            (input)="setWall('wall_height_mm', $any($event.target).value)"
-                                        />
-                                    </div>
-                                </div>
-                                <div class="grid gap-1.5">
-                                    <label ui-label>Anything else we should know? (optional)</label>
-                                    <textarea
-                                        ui-textarea
-                                        rows="2"
-                                        [value]="d().notes"
-                                        (input)="form.set('notes', $any($event.target).value)"
-                                    ></textarea>
-                                </div>
-                            </section>
+                                </section>
+                            }
                         </div>
 
                         <!-- right: live preview -->
                         <aside
                             [class]="
-                                'bg-muted/30 flex flex-col gap-4 border-t px-5 py-6 sm:px-6 lg:col-span-7 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:border-t-0 lg:border-l lg:py-5 ' +
+                                'bg-muted/30 flex flex-col gap-3 border-t px-5 py-4 sm:px-6 lg:col-span-7 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:border-t-0 lg:border-l ' +
                                 thinScroll
                             "
                         >
@@ -530,8 +653,10 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                 [mat]="d().mat_id && matsAllowed() ? parts().mat : null"
                                 [depthMm]="parts().depthMm"
                                 [edgeStyle]="d().edge_style"
+                                [rotation]="d().source_type === 'catalog' ? d().image_rotation : 0"
                                 [glazing]="parts().glazing"
                                 [wallColour]="d().wall_colour"
+                                (wallColourChange)="form.set('wall_colour', $event)"
                                 [wallWidthMm]="d().wall_width_mm"
                                 [wallHeightMm]="d().wall_height_mm"
                                 [unit]="d().unit"
@@ -539,11 +664,14 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                             />
 
                             @if (warnings().length > 0) {
-                                <ul
-                                    class="space-y-1 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
-                                >
+                                <ul class="flex flex-col gap-1.5" aria-live="polite">
                                     @for (w of warnings(); track w) {
-                                        <li>• {{ w }}</li>
+                                        <li
+                                            class="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+                                        >
+                                            <svg [icon]="TriangleAlert" class="mt-px size-3.5 shrink-0" />
+                                            <span>{{ w }}</span>
+                                        </li>
                                     }
                                 </ul>
                             }
@@ -562,9 +690,20 @@ const STEP_NUMBER = 'bg-primary text-primary-foreground flex size-6 items-center
                                 </p>
                             }
                         </div>
-                        <div class="grid shrink-0 grid-cols-2 gap-2 sm:flex sm:gap-3">
-                            <button ui-button type="button" variant="outline" class="sm:min-w-28" (click)="open.set(false)">Cancel</button>
-                            <button ui-button type="submit" class="sm:min-w-40" [disabled]="form.processing()">
+                        <div class="flex shrink-0 flex-wrap items-center gap-2 sm:gap-3">
+                            @if (step() > 1) {
+                                <button ui-button type="button" variant="ghost" (click)="goTo(step() - 1)">
+                                    <svg [icon]="ArrowLeft" class="size-4" /> Back
+                                </button>
+                            } @else {
+                                <button ui-button type="button" variant="ghost" (click)="cancel()">Cancel</button>
+                            }
+                            @if (step() < 5) {
+                                <button ui-button type="button" variant="outline" class="sm:min-w-32" (click)="goTo(step() + 1)">
+                                    Next: {{ steps()[step()].label }} <svg [icon]="ArrowRight" class="size-4" />
+                                </button>
+                            }
+                            <button ui-button type="submit" class="flex-1 sm:min-w-40 sm:flex-none" [disabled]="form.processing()">
                                 @if (form.processing()) {
                                     <svg [icon]="LoaderCircle" class="size-4 animate-spin" />
                                 }
@@ -586,14 +725,68 @@ export class LineEditor {
     protected form = new InertiaForm<LineForm>({} as LineForm);
     protected d = this.form.data;
     protected readonly LoaderCircle = LoaderCircle;
-    protected readonly wallColours = WALL_COLOURS;
-    protected readonly stepNumber = STEP_NUMBER;
+    protected readonly Check = Check;
+    protected readonly ArrowLeft = ArrowLeft;
+    protected readonly ArrowRight = ArrowRight;
+    protected readonly TriangleAlert = TriangleAlert;
     protected readonly thinScroll = THIN_SCROLL;
+    protected readonly disclosure = DISCLOSURE;
     protected readonly sources = [
-        { value: 'catalog' as const, icon: Images, title: 'From our catalog', text: 'Pick a painting or print we offer.' },
-        { value: 'custom_creation' as const, icon: Brush, title: 'A new creation', text: 'We paint something new for you.' },
-        { value: 'own_artwork' as const, icon: FrameIcon, title: 'My own artwork', text: 'Frame or reproduce a piece you have.' },
+        { value: 'catalog' as const, icon: Images, short: 'Catalogue', title: 'From our catalog', text: 'Pick a painting or print we offer.' },
+        { value: 'custom_creation' as const, icon: Brush, short: 'New creation', title: 'A new creation', text: 'We paint something new for you.' },
+        {
+            value: 'own_artwork' as const,
+            icon: FrameIcon,
+            short: 'My artwork',
+            title: 'My own artwork',
+            text: 'Frame or reproduce a piece you have.',
+        },
     ];
+    protected sourceText = computed(() => this.sources.find((s) => s.value === this.d().source_type)?.text ?? '');
+
+    // ---- steps: one on screen at a time ----
+    protected step = signal(1);
+    private visited = signal<Set<number>>(new Set([1]));
+    private stepPane = viewChild<ElementRef<HTMLElement>>('stepPane');
+    protected steps = computed(() => {
+        const errors = Object.keys(this.form.errors());
+        const visited = this.visited();
+        const d = this.d();
+        const filled: Record<number, boolean> = {
+            1:
+                d.source_type === 'catalog'
+                    ? !!d.artwork_id
+                    : d.source_type === 'custom_creation'
+                      ? !!d.brief.description?.trim() && d.references.length + this.existingReferences().length > 0
+                      : !!(d.artwork_photo || this.line()?.artwork_photo) && d.rights_confirmed,
+            2: d.width_mm > 0 && d.height_mm > 0,
+            4: !(this.substrate()?.requires_frame && !d.frame_id && !d.frame_advice_requested),
+        };
+        return STEPS.map((s) => ({
+            ...s,
+            error: errors.some((k) => stepOfField(k) === s.n),
+            done: (filled[s.n] ?? true) && visited.has(s.n),
+        }));
+    });
+
+    goTo(n: number): void {
+        const next = Math.min(5, Math.max(1, n));
+        this.step.set(next);
+        this.visited.update((v) => new Set(v).add(next));
+        this.stepPane()?.nativeElement.scrollTo({ top: 0 });
+    }
+
+    protected matSummary = computed(() => {
+        const m = this.options().mats.find((x) => x.id === this.d().mat_id);
+        return m ? `${m.name} · ${this.matBorderText()} ${this.d().unit === 'cm' ? 'cm' : 'in'}` : 'None';
+    });
+    protected glazingSummary = computed(() => this.glazings().find((g) => g.id === this.d().glazing_id)?.name ?? 'Not sure — advise me');
+    protected finishingSummary = computed(() => {
+        const names = this.finishings()
+            .filter((f) => this.d().finishing_ids.includes(f.id))
+            .map((f) => f.name);
+        return names.length ? names.join(', ') : 'None chosen';
+    });
 
     // ---- options filtered by what is already chosen (spec §4.3) ----
     protected artwork = computed(() => this.options().artworks.find((a) => a.id === this.d().artwork_id) ?? null);
@@ -658,10 +851,72 @@ export class LineEditor {
         if (d.glazing_id && !this.glazings().some((g) => g.id === d.glazing_id))
             w.push('The chosen glazing is not available for this size or surface.');
         if (d.mat_id && !this.matsAllowed()) w.push(`${s?.name} cannot have a mat.`);
-        if (s?.requires_frame && !d.frame_id && !d.frame_advice_requested) w.push(`${s.name} needs a frame — pick one or ask for our advice.`);
+        if (s?.requires_frame && !d.frame_id && !d.frame_advice_requested && this.visited().has(4)) w.push(`${s.name} needs a frame — pick one or ask for our advice.`);
         return w;
     });
     protected errorCount = computed(() => Object.keys(this.form.errors()).length);
+    /** No frame and no frame advice: glass and a mat are not offered (nor charged). */
+    protected unframed = computed(() => !this.d().frame_id && !this.d().frame_advice_requested);
+
+    /** Step 5 recap of everything chosen; a row with something missing is highlighted. */
+    protected review = computed(() => {
+        const d = this.d();
+        const o = this.options();
+        const unit = d.unit === 'cm' ? 'cm' : 'in';
+        const hasPhoto = !!(d.artwork_photo || this.line()?.artwork_photo);
+        const artwork =
+            d.source_type === 'catalog'
+                ? (this.artwork()?.title ?? '')
+                : d.source_type === 'custom_creation'
+                  ? d.title || (d.brief.description ? 'New creation: ' + d.brief.description : '')
+                  : d.title || (hasPhoto ? 'My artwork (photo added)' : '');
+        const turned = d.source_type === 'catalog' && ((d.image_rotation ?? 0) / 90) % 2 === 1 ? ' · sides swapped' : '';
+        const name = (list: { id: number; name: string }[], id: number | null, fallback: string) => list.find((x) => x.id === id)?.name ?? fallback;
+        const frame = d.frame_id ? name(o.frames, d.frame_id, 'Frame') : d.frame_advice_requested ? 'Advise me' : 'No frame';
+        const extras = this.unframed() ? '' : [d.mat_id && this.matsAllowed() ? 'Mat ' + this.matSummary() : '', this.glazingSummary()].filter(Boolean).join(' · ');
+        const steps = this.steps();
+        return [
+            { step: 1, label: 'Artwork', value: artwork || 'Not chosen yet', missing: !steps[0].done },
+            {
+                step: 2,
+                label: 'Size',
+                value: `${mmToUnit(d.width_mm, d.unit)} × ${mmToUnit(d.height_mm, d.unit)} ${unit}${turned}${d.quantity > 1 ? ' · ×' + d.quantity : ''}`,
+                missing: false,
+            },
+            {
+                step: 3,
+                label: 'Materials',
+                value: [name(o.quality_tiers, d.quality_tier_id, ''), name(o.mediums, d.medium_id, 'Medium: advise me'), name(o.substrates, d.substrate_id, 'Surface: advise me')]
+                    .filter(Boolean)
+                    .join(' · '),
+                missing: false,
+            },
+            { step: 4, label: 'Frame', value: frame + (extras ? ' · ' + extras : ''), missing: !steps[3].done },
+        ];
+    });
+
+    // Closing with unsaved changes (backdrop, Escape, X, Cancel) asks first.
+    private snapshot = '';
+    private serialise(): string {
+        return JSON.stringify(this.d(), (_k, v) => (v instanceof File ? `file:${v.name}:${v.size}` : v));
+    }
+    protected confirmClose = (): boolean =>
+        this.form.processing() || this.serialise() === this.snapshot || window.confirm('Discard the changes to this artwork?');
+
+    /** Enter in a field moves to the next step instead of saving the whole form (Enter on step 5 saves). */
+    protected enterNext(event: Event): void {
+        const target = event.target as HTMLElement;
+        if (target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || this.step() >= 5) return;
+        event.preventDefault();
+        // Commit the field being typed in (sizes apply on change/blur) before its step goes away.
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        target.blur();
+        this.goTo(this.step() + 1);
+    }
+
+    protected cancel(): void {
+        if (this.confirmClose()) this.open.set(false);
+    }
 
     // ---- preview image ----
     private objectUrl = signal<string | null>(null);
@@ -695,12 +950,13 @@ export class LineEditor {
         this.enquiryId,
         computed(() => {
             const d = this.d();
+            const [width_mm, height_mm] = unturnedSize(d);
             return {
                 source_type: d.source_type,
                 artwork_id: d.artwork_id,
                 size_reference: d.size_reference,
-                width_mm: d.width_mm,
-                height_mm: d.height_mm,
+                width_mm,
+                height_mm,
                 quantity: d.quantity,
                 quality_tier_id: d.quality_tier_id,
                 medium_id: d.medium_id,
@@ -718,14 +974,33 @@ export class LineEditor {
     );
 
     constructor() {
-        // Reset whenever the dialog opens (for a new line or another line).
+        // Reset whenever the dialog opens (for a new line or another line) — but NOT when the page's data merely
+        // reloads (a failed save reloads the props: the form, its errors and the current step must survive that).
+        let openedFor: string | null = null;
         effect(() => {
-            if (!this.open()) return;
-            const fresh = initialLineForm(this.line(), this.options());
+            const key = this.open() ? `line:${this.line()?.id ?? 'new'}` : null;
+            if (key === openedFor) return;
+            openedFor = key;
+            if (!key) return;
             untracked(() => {
+                const fresh = initialLineForm(this.line(), this.options());
                 this.form.setDefaults(fresh);
                 this.form.setAll(fresh);
                 this.form.clearErrors();
+                this.snapshot = this.serialise();
+                // Editing an existing artwork: every step is already filled in.
+                this.step.set(1);
+                this.visited.set(new Set(this.line() ? [1, 2, 3, 4, 5] : [1]));
+            });
+        });
+
+        // After a failed save, show the first step that needs attention.
+        effect(() => {
+            const keys = Object.keys(this.form.errors());
+            if (!keys.length) return;
+            const first = Math.min(...keys.map(stepOfField));
+            untracked(() => {
+                if (!keys.some((k) => stepOfField(k) === this.step())) this.goTo(first);
             });
         });
 
@@ -764,6 +1039,7 @@ export class LineEditor {
         this.form.update((d) => ({
             ...d,
             artwork_id: a.id,
+            image_rotation: 0,
             width_mm: size?.width_mm ?? d.width_mm,
             height_mm: size?.height_mm ?? d.height_mm,
             medium_id: a.default_medium_id ?? d.medium_id,
@@ -807,7 +1083,18 @@ export class LineEditor {
     }
 
     setFrame(id: number | null, advice: boolean): void {
-        this.form.update((d) => ({ ...d, frame_id: id, frame_advice_requested: advice }));
+        const o = this.options();
+        const noGlass = o.glazings.find((g) => g.material === 'none')?.id ?? null;
+        const tierGlass = o.quality_tiers.find((t) => t.id === this.d().quality_tier_id)?.default_glazing_id ?? null;
+        const unframed = !id && !advice;
+        this.form.update((d) => ({
+            ...d,
+            frame_id: id,
+            frame_advice_requested: advice,
+            // Without a frame there is no glass or mat; picking a frame again brings the tier's glass back.
+            mat_id: unframed ? null : d.mat_id,
+            glazing_id: unframed ? noGlass : d.glazing_id === noGlass && tierGlass ? tierGlass : d.glazing_id,
+        }));
     }
 
     setMatBorder(value: string): void {
@@ -830,10 +1117,17 @@ export class LineEditor {
             ? route('portal.enquiries.lines.update', [this.enquiryId(), line.id])
             : route('portal.enquiries.lines.store', this.enquiryId());
         const matsAllowed = this.matsAllowed();
+        const edgeValues = this.edgeOptions().map((o) => o.value as string);
         this.form.transform((d) => ({
             ...d,
+            // The server keeps the painting's own (unturned) size plus how far it is turned.
+            width_mm: unturnedSize(d)[0],
+            height_mm: unturnedSize(d)[1],
+            image_rotation: d.source_type === 'catalog' ? d.image_rotation : 0,
             mat_id: matsAllowed ? d.mat_id : null,
             frame_advice_requested: d.frame_id ? false : d.frame_advice_requested,
+            // An edge style only for a surface that offers it.
+            edge_style: edgeValues.includes(d.edge_style ?? '') ? d.edge_style : null,
         }));
         this.form.post(url, {
             forceFormData: true,

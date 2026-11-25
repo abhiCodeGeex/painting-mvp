@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Sales\Quotes;
 
+use App\Domain\Pricing\GstCalculator;
 use App\Domain\Quotes\QuoteBuilder;
 use App\Enums\QuoteStatus;
 use App\Filament\Resources\Sales\Enquiries\EnquiryResource;
@@ -159,7 +160,7 @@ class QuoteResource extends Resource
 
             Grid::make(1)->columnSpan(1)->schema([
                 Section::make('Totals')
-                    ->description('Updated when you save.')
+                    ->description('Discount updates live; line and extra changes update when you save.')
                     ->schema([
                         TextEntry::make('status')->badge(),
                         TextEntry::make('enquiry_link')->label('Enquiry')
@@ -168,16 +169,38 @@ class QuoteResource extends Resource
                             ->color('primary'),
                         TextEntry::make('items_total')->label('Artworks')->formatStateUsing(fn ($state) => Money::format((int) $state)),
                         TextEntry::make('extras_total')->label('Extras')->formatStateUsing(fn ($state) => Money::format((int) $state)),
+                        // One discount at a time: typing a % clears the amount and vice versa; totals update as you type.
                         Grid::make(2)->schema([
-                            TextInput::make('discount_percent')->label('Discount %')->numeric()->minValue(0)->maxValue(100)->default(0)->suffix('%'),
-                            MoneyInput::make('discount_amount')->label('or amount')->helperText('Used when % is 0.'),
+                            TextInput::make('discount_percent')->label('Discount %')->numeric()->minValue(0)->maxValue(100)->default(0)->suffix('%')
+                                ->dehydrateStateUsing(fn ($state): float => (float) ($state ?: 0))
+                                ->live(debounce: 400)
+                                ->afterStateUpdated(fn ($state, Set $set) => (float) $state > 0 ? $set('discount_amount', null) : null),
+                            MoneyInput::make('discount_amount')->label('or amount')
+                                // With a % in use the stored amount is just its result: show the box empty.
+                                ->formatStateUsing(fn ($state, ?Quote $record): ?string => (float) $record?->discount_percent > 0 || $state === null || $state === '' || (int) $state === 0
+                                    ? null : Money::toRupees((int) $state))
+                                // Cleared (when a % is typed) saves as 0, never NULL.
+                                ->dehydrateStateUsing(fn ($state): int => $state === null || $state === '' ? 0 : Money::toPaise((string) $state))
+                                ->live(debounce: 400)
+                                ->afterStateUpdated(fn ($state, Set $set) => (float) $state > 0 ? $set('discount_percent', 0) : null)
+                                ->helperText('Use either a % or an amount, not both.'),
                         ]),
-                        TextEntry::make('taxable')->label('Taxable value')->formatStateUsing(fn ($state) => Money::format((int) $state)),
+                        TextEntry::make('discount_live')->label('Discount')
+                            ->state(fn (?Quote $record, Get $get) => ($t = self::liveTotals($record, $get)) ? '− '.Money::format($t['discount']) : null)
+                            ->placeholder('—'),
+                        TextEntry::make('taxable')->label('Taxable value')
+                            ->state(fn (?Quote $record, Get $get) => ($t = self::liveTotals($record, $get)) ? Money::format($t['taxable']) : null),
                         TextEntry::make('gst')->label('GST')
-                            ->state(fn (?Quote $record) => ! $record ? null : ($record->intra_state
-                                ? 'CGST '.Money::format($record->cgst).' + SGST '.Money::format($record->sgst)
-                                : 'IGST '.Money::format($record->igst)).' @ '.(float) $record->tax_rate.'%'),
-                        TextEntry::make('grand_total')->label('Grand total')->formatStateUsing(fn ($state) => Money::format((int) $state))->weight('bold')->size('lg'),
+                            ->state(function (?Quote $record, Get $get): ?string {
+                                $t = self::liveTotals($record, $get);
+
+                                return ! $t ? null : ($t['intra_state']
+                                    ? 'CGST '.Money::format($t['cgst']).' + SGST '.Money::format($t['sgst'])
+                                    : 'IGST '.Money::format($t['igst'])).' @ '.(float) $t['rate'].'%';
+                            }),
+                        TextEntry::make('grand_total')->label('Grand total')
+                            ->state(fn (?Quote $record, Get $get) => ($t = self::liveTotals($record, $get)) ? Money::format($t['grand_total']) : null)
+                            ->weight('bold')->size('lg'),
                         TextEntry::make('margin')->label('Margin (staff only)')
                             ->state(fn (?Quote $record) => $record?->marginPercent() !== null
                                 ? $record->marginPercent().'% · cost '.Money::format($record->total_cost)
@@ -212,6 +235,32 @@ class QuoteResource extends Resource
                     ]),
             ]),
         ])->disabled(fn (?Quote $record) => $record && ! $record->status->isEditable());
+    }
+
+    /**
+     * Totals with the discount as currently typed (not yet saved), worked out the same way as QuoteBuilder:
+     * artworks and extras as last saved, minus the discount, plus GST.
+     *
+     * @return array{discount: int, taxable: int, intra_state: bool, rate: float, cgst: int, sgst: int, igst: int, grand_total: int}|null
+     */
+    private static function liveTotals(?Quote $quote, Get $get): ?array
+    {
+        if (! $quote) {
+            return null;
+        }
+        $subtotal = (int) $quote->items_total + (int) $quote->extras_total;
+        $percent = (float) $get('discount_percent');
+        $amount = $get('discount_amount');
+        $amount = $amount === null || $amount === '' ? 0 : Money::toPaise((string) $amount);
+        $discount = $percent > 0 ? (int) round($subtotal * $percent / 100) : min(max(0, $amount), $subtotal);
+
+        $gst = app(GstCalculator::class)->calculate(
+            $subtotal - $discount,
+            $quote->enquiry->deliveryAddress?->state?->gst_code,
+            (bool) $quote->enquiry->customer?->tax_exempt,
+        );
+
+        return ['discount' => $discount, 'rate' => (float) $gst['rate'], ...$gst];
     }
 
     private static function responseSummary(?Quote $quote): ?string

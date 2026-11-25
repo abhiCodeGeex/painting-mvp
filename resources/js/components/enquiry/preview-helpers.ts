@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils';
 import type { CatalogOptions } from '@/types/portal';
 
 export type GlazingLook = 'none' | 'standard' | 'low';
@@ -44,6 +45,15 @@ export const WALL_COLOURS: { name: string; hex: string }[] = [
 export const SAMPLE_GRADIENT = 'linear-gradient(135deg,#f6d365 0%,#fda085 35%,#a1c4fd 70%,#5b7db1 100%)';
 
 /** Frame/mat/depth/glazing for the previews, from the ids chosen on a line. */
+/** A saved line's size as it hangs: a catalogue painting turned 90°/270° is saved with its own size, so swap. */
+export function hungSize(line: { width_mm: number; height_mm: number; image_rotation?: number; source_type?: string | null }): {
+    width_mm: number;
+    height_mm: number;
+} {
+    const turned = line.source_type === 'catalog' && ((line.image_rotation ?? 0) / 90) % 2 === 1;
+    return turned ? { width_mm: line.height_mm, height_mm: line.width_mm } : { width_mm: line.width_mm, height_mm: line.height_mm };
+}
+
 export function previewParts(
     options: CatalogOptions,
     ids: {
@@ -118,4 +128,18 @@ export interface WallPiece {
     depthMm: number;
     edgeStyle: string | null;
     glazing: GlazingLook;
+    /** Picture turned clockwise (0/90/180/270°); widthMm/heightMm are already the turned piece's size. */
+    rotation?: number;
+}
+
+/**
+ * The preview stage every tab shares, so switching tabs never jumps: 16:10, never taller than the
+ * window leaves room for (dialog header, tabs, footer). With `fill`, on large screens it takes the
+ * free height of a flex-column parent instead.
+ */
+export function stageClass(fill: boolean): string {
+    return cn(
+        'relative aspect-[16/10] max-h-[calc(100dvh-15rem)] min-h-[320px] w-full',
+        fill && 'lg:aspect-auto lg:max-h-none lg:min-h-[240px] lg:flex-1',
+    );
 }

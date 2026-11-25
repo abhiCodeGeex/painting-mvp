@@ -1,7 +1,7 @@
 {
   "key": "lobby",
   "title": "Hotel lobby",
-  "faceSize": 1024,
+  "faceSize": 2048,
   "faces": {
     "f": {
       "dir": [
@@ -105,8 +105,17 @@
   "wallAlbedo": 0.8,
   "knee": 0.8,
   "exposure": [
-    0.4946,
-    0.9094,
-    1.6831
-  ]
+    0.4987,
+    0.9085,
+    1.6834
+  ],
+  "detail": {
+    "file": "detail.webp",
+    "mask": "detail-mask.webp",
+    "size": 4096,
+    "u0": 0.309524,
+    "u1": 0.690476,
+    "v0": 0.426101,
+    "v1": 0.807054
+  }
 }

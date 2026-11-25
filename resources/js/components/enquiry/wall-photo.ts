@@ -1,10 +1,11 @@
 import { mmToUnit, unitToMm, type Unit } from '@/lib/units';
+import { cn } from '@/lib/utils';
 import { Icon } from '@/ui/icon';
 import { UiButton, UiInput } from '@/ui/primitives';
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, input, signal, viewChild } from '@angular/core';
 import { Camera, Eye, EyeOff, RotateCcw, Upload } from 'lucide';
 import { FramedArt } from './framed-art';
-import { outerSize, type PreviewFrame, type PreviewMat } from './preview-helpers';
+import { outerSize, stageClass, type PreviewFrame, type PreviewMat } from './preview-helpers';
 
 type Pt = [number, number];
 /** 3×3 homography, row-major [a,b,c, d,e,f, g,h,i]. */
@@ -80,7 +81,7 @@ const DEFAULT_CORNERS: Pt[] = [
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         @if (!photo()) {
-            <label class="hover:bg-muted flex h-[360px] cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-6 text-center">
+            <label [class]="emptyClass()">
                 <svg [icon]="Camera" class="text-muted-foreground size-8" />
                 <span class="font-medium">Upload a photo of your wall</span>
                 <span class="text-muted-foreground max-w-sm text-xs">
@@ -92,8 +93,14 @@ const DEFAULT_CORNERS: Pt[] = [
             </label>
         } @else {
             <div class="space-y-2">
-                <div #stage class="relative w-full touch-none overflow-hidden rounded-lg border bg-black select-none">
-                    <img [src]="photo()" alt="Your wall" class="block w-full" draggable="false" (load)="measure()" />
+                <div #stage class="relative mx-auto w-fit max-w-full touch-none overflow-hidden rounded-lg border bg-black select-none">
+                    <img
+                        [src]="photo()"
+                        alt="Your wall"
+                        class="block h-auto max-h-[max(220px,calc(100dvh-29rem))] w-auto max-w-full"
+                        draggable="false"
+                        (load)="measure()"
+                    />
 
                     @if (transform(); as tf) {
                         <div
@@ -109,6 +116,7 @@ const DEFAULT_CORNERS: Pt[] = [
                                 [frame]="frame()"
                                 [mat]="mat()"
                                 [depthMm]="depthMm()"
+                                [rotation]="rotation()"
                                 [scale]="1"
                             />
                         </div>
@@ -116,7 +124,13 @@ const DEFAULT_CORNERS: Pt[] = [
 
                     @if (showMarks()) {
                         <svg class="pointer-events-none absolute inset-0 h-full w-full">
-                            <polygon [attr.points]="outline()" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4" />
+                            <polygon
+                                [attr.points]="outline()"
+                                fill="rgba(245,158,11,0.08)"
+                                stroke="#f59e0b"
+                                stroke-width="2"
+                                stroke-dasharray="6 4"
+                            />
                         </svg>
                         @for (c of screenCorners(); track $index) {
                             <span
@@ -133,16 +147,32 @@ const DEFAULT_CORNERS: Pt[] = [
                 <div class="flex flex-wrap items-end gap-3 text-xs">
                     <div class="grid gap-1">
                         <span class="text-muted-foreground">Marked width ({{ unit() === 'cm' ? 'cm' : 'in' }})</span>
-                        <input ui-input type="number" min="1" class="h-8 w-24" [value]="refWText()" (input)="setRef('w', $any($event.target).value)" />
+                        <input
+                            ui-input
+                            type="number"
+                            min="1"
+                            class="h-8 w-24"
+                            [value]="refWText()"
+                            (input)="setRef('w', $any($event.target).value)"
+                        />
                     </div>
                     <div class="grid gap-1">
                         <span class="text-muted-foreground">Marked height ({{ unit() === 'cm' ? 'cm' : 'in' }})</span>
-                        <input ui-input type="number" min="1" class="h-8 w-24" [value]="refHText()" (input)="setRef('h', $any($event.target).value)" />
+                        <input
+                            ui-input
+                            type="number"
+                            min="1"
+                            class="h-8 w-24"
+                            [value]="refHText()"
+                            (input)="setRef('h', $any($event.target).value)"
+                        />
                     </div>
                     <button ui-button variant="ghost" size="sm" type="button" (click)="showMarks.set(!showMarks())">
                         <svg [icon]="showMarks() ? EyeOff : Eye" class="size-4" /> {{ showMarks() ? 'Hide marks' : 'Show marks' }}
                     </button>
-                    <button ui-button variant="ghost" size="sm" type="button" (click)="centreArt()"><svg [icon]="RotateCcw" class="size-4" /> Centre artwork</button>
+                    <button ui-button variant="ghost" size="sm" type="button" (click)="centreArt()">
+                        <svg [icon]="RotateCcw" class="size-4" /> Centre artwork
+                    </button>
                     <label ui-button variant="outline" size="sm" class="cursor-pointer">
                         <svg [icon]="Upload" class="size-4" /> Other photo
                         <input type="file" accept="image/*" class="hidden" (change)="pick($event)" />
@@ -162,7 +192,17 @@ export class WallPhoto {
     readonly frame = input<PreviewFrame | null>(null);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
+    /** Picture turned clockwise (0/90/180/270°); widthMm/heightMm are already the turned piece's size. */
+    readonly rotation = input(0);
     readonly unit = input<Unit>('cm');
+    /** Take the free height of a flex-column parent on large screens (same stage as the other tabs). */
+    readonly fill = input(false);
+    protected emptyClass = computed(() =>
+        cn(
+            stageClass(this.fill()),
+            'hover:bg-muted flex cursor-pointer flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed p-6 text-center',
+        ),
+    );
 
     protected readonly Camera = Camera;
     protected readonly Upload = Upload;
@@ -187,7 +227,11 @@ export class WallPhoto {
     protected refWText = computed(() => mmToUnit(this.refW(), this.unit()));
     protected refHText = computed(() => mmToUnit(this.refH(), this.unit()));
     protected screenCorners = computed<Pt[]>(() => this.corners().map(([x, y]) => [x * this.size().w, y * this.size().h]));
-    protected outline = computed(() => this.screenCorners().map((c) => c.join(',')).join(' '));
+    protected outline = computed(() =>
+        this.screenCorners()
+            .map((c) => c.join(','))
+            .join(' '),
+    );
 
     /** Wall (mm, from the rectangle's top-left) → photo pixels. */
     private wallToScreen = computed(() => {

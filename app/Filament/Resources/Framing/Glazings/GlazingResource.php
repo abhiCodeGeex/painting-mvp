@@ -82,9 +82,10 @@ class GlazingResource extends MasterResource
             TextColumn::make('reflection_level')->label('Reflection'),
             MasterTable::money('cost_per_m2', 'Cost / m²'),
             TextColumn::make('max_area_m2')->label('Max area')->suffix(' m²')->placeholder('—')->alignEnd(),
+            MasterTable::stock(),
         ], [
             SelectFilter::make('material')->options(GlazingMaterial::class),
-        ]);
+        ])->modifyQueryUsing(fn ($query) => $query->with('stockItem'));
     }
 
     public static function getPages(): array

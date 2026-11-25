@@ -9,13 +9,16 @@ function xsrfToken(): string {
     return match ? decodeURIComponent(match[1]) : '';
 }
 
+/** A live estimate; `invalid` when the server rejected the latest options (the price shown would be stale). */
+export type LiveEstimate = LineEstimate & { invalid?: boolean };
+
 /**
  * Asks the server for a price whenever the line's options change (debounced).
  * Prices are always calculated on the server so rates and formulas stay private.
  * Call from a component constructor (injection context).
  */
 export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<string, unknown>>, enabled: Signal<boolean>) {
-    const estimate = signal<LineEstimate | null>(null);
+    const estimate = signal<LiveEstimate | null>(null);
     const loading = signal(false);
     let controller: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -43,8 +46,9 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                     signal: ctrl.signal,
                     credentials: 'same-origin',
                 });
-                // Incomplete input (e.g. size still being typed): keep the last good estimate.
                 if (res.ok) estimate.set(await res.json());
+                // Rejected input (e.g. a size out of range): don't leave the last price standing as if it applied.
+                else if (controller === ctrl) estimate.update((prev) => (prev ? { ...prev, invalid: true } : prev));
             } catch {
                 /* aborted or offline: ignore */
             } finally {
@@ -77,7 +81,9 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                                 <svg [icon]="LoaderCircle" class="size-3 animate-spin" />
                             }
                         </div>
-                        @if (e(); as est) {
+                        @if (invalid()) {
+                            <div class="text-sm text-amber-700 dark:text-amber-400">Check the size and options</div>
+                        } @else if (e(); as est) {
                             <div class="text-lg font-semibold tabular-nums">
                                 {{ range(est.unit_low, est.unit_high) }}
                                 @if (qty() > 1) {
@@ -100,7 +106,7 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                             </div>
                         }
                     </div>
-                    @if (e()?.items?.length) {
+                    @if (!invalid() && e()?.items?.length) {
                         <button
                             type="button"
                             class="text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1 text-xs"
@@ -111,7 +117,7 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                     }
                 </div>
 
-                @if (e(); as est) {
+                @if (!invalid() && e(); as est) {
                     @if (open()) {
                         <ul
                             [class]="
@@ -157,6 +163,7 @@ export class PriceEstimateBox {
     /** Borderless, single-line version for a dialog footer; the breakdown opens as a popover above it. */
     readonly inline = input(false);
     protected open = signal(false);
+    protected invalid = computed(() => !!(this.estimate() as LiveEstimate | null)?.invalid);
     protected e = computed(() => (this.estimate()?.available ? this.estimate() : null));
     protected qty = computed(() => this.estimate()?.quantity ?? 1);
     protected readonly LoaderCircle = LoaderCircle;

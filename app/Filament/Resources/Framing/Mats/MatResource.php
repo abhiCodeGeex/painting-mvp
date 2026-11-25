@@ -84,7 +84,8 @@ class MatResource extends MasterResource
             TextColumn::make('thickness_mm')->label('Thickness')->suffix(' mm')->alignEnd(),
             MasterTable::mm('default_border_mm', 'Border'),
             MasterTable::money('cost_per_m2', 'Cost / m²'),
-        ]);
+            MasterTable::stock(),
+        ])->modifyQueryUsing(fn ($query) => $query->with('stockItem'));
     }
 
     public static function getPages(): array

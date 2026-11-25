@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\StockUnit;
+use App\Models\Concerns\HasStock;
 use App\Models\Concerns\IsMaster;
 use Illuminate\Database\Eloquent\Model;
 
@@ -10,7 +12,12 @@ use Illuminate\Database\Eloquent\Model;
  */
 class Mat extends Model
 {
-    use IsMaster;
+    use HasStock, IsMaster;
+
+    public function stockUnit(): StockUnit
+    {
+        return StockUnit::Sheet;
+    }
 
     protected $guarded = ['id'];
 

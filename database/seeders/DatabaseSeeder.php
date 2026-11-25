@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
                 DemoCatalogSeeder::class,
                 MuseumArtworkSeeder::class,
                 DemoEnquirySeeder::class,
+                DemoStockSeeder::class,
             ]);
             // The catalogue shows real paintings only: the generated demo pictures stay for the demo
             // enquiries (and tests) but are hidden from customers.

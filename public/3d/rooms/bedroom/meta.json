@@ -1,7 +1,7 @@
 {
   "key": "bedroom",
   "title": "Bedroom",
-  "faceSize": 1024,
+  "faceSize": 2048,
   "faces": {
     "f": {
       "dir": [
@@ -105,8 +105,203 @@
   "wallAlbedo": 0.8,
   "knee": 0.8,
   "exposure": [
-    0.6886,
-    1.2388,
-    2.203
-  ]
+    0.688,
+    1.2328,
+    2.2035
+  ],
+  "detail": {
+    "file": "detail.webp",
+    "mask": "detail-mask.webp",
+    "size": 4096,
+    "u0": 0.277778,
+    "u1": 0.722222,
+    "v0": 0.345486,
+    "v1": 0.789931
+  },
+  "layers": {
+    "empty": {
+      "faces": "<face>-empty.webp",
+      "mask": "<face>-empty-mask.webp",
+      "facesList": [
+        "f",
+        "r",
+        "b",
+        "l",
+        "d"
+      ],
+      "hasDetail": false,
+      "detailSkipped": true
+    },
+    "items": [
+      {
+        "key": "rug",
+        "label": "Rug",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-rug-f.webp",
+            "obj": "L-rug-f-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.245605
+            ]
+          },
+          "d": {
+            "file": "L-rug-d.webp",
+            "obj": "L-rug-d-obj.webp",
+            "rect": [
+              0.0,
+              0.679121,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "plant",
+        "label": "Plant",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-plant-f.webp",
+            "obj": "L-plant-f-obj.webp",
+            "rect": [
+              0.023438,
+              0.233887,
+              0.323242,
+              0.335449
+            ]
+          }
+        }
+      },
+      {
+        "key": "panel",
+        "label": "Slatted wall panel",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-panel-f.webp",
+            "obj": "L-panel-f-obj.webp",
+            "rect": [
+              0.087402,
+              0.181641,
+              0.912598,
+              0.500488
+            ]
+          }
+        }
+      },
+      {
+        "key": "bedside",
+        "label": "Bedside tables",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-bedside-f.webp",
+            "obj": "L-bedside-f-obj.webp",
+            "rect": [
+              0.026855,
+              0.205566,
+              0.973145,
+              0.475098
+            ]
+          }
+        }
+      },
+      {
+        "key": "dresser",
+        "label": "Dresser",
+        "default": false,
+        "faces": {
+          "b": {
+            "file": "L-dresser-b.webp",
+            "obj": "L-dresser-b-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.446777
+            ]
+          },
+          "d": {
+            "file": "L-dresser-d.webp",
+            "obj": "L-dresser-d-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.158974
+            ]
+          }
+        }
+      },
+      {
+        "key": "armchair",
+        "label": "Armchair",
+        "default": false,
+        "faces": {
+          "l": {
+            "file": "L-armchair-l.webp",
+            "obj": "L-armchair-l-obj.webp",
+            "rect": [
+              0.166016,
+              0.0,
+              1.0,
+              0.461914
+            ]
+          },
+          "d": {
+            "file": "L-armchair-d.webp",
+            "obj": "L-armchair-d-obj.webp",
+            "rect": [
+              0.0,
+              0.275458,
+              0.225641,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "bed",
+        "label": "Bed",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-bed-f.webp",
+            "obj": "L-bed-f-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.517578
+            ]
+          },
+          "r": {
+            "file": "L-bed-r.webp",
+            "obj": "L-bed-r-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.09668,
+              0.405762
+            ]
+          },
+          "d": {
+            "file": "L-bed-d.webp",
+            "obj": "L-bed-d-obj.webp",
+            "rect": [
+              0.0,
+              0.830037,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    ]
+  }
 }

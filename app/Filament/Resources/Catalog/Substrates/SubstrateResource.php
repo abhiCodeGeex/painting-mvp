@@ -136,6 +136,7 @@ class SubstrateResource extends MasterResource
             IconColumn::make('allows_mat')->label('Mat')->boolean()->toggleable(isToggledHiddenByDefault: true),
             IconColumn::make('requires_frame')->label('Needs frame')->boolean()->toggleable(isToggledHiddenByDefault: true),
             MasterTable::money('cost_per_m2', 'Cost / m²'),
+            MasterTable::stock(),
         ], [
             SelectFilter::make('material_type')->label('Material type')->options(SubstrateMaterial::class),
             SelectFilter::make('finish')->options(SubstrateFinish::class),
@@ -146,7 +147,7 @@ class SubstrateResource extends MasterResource
                     ? $query->whereJsonContains('printing_methods', $data['value'])
                     : $query),
             SelectFilter::make('unit')->options(SubstrateUnit::class),
-        ]);
+        ])->modifyQueryUsing(fn (Builder $query) => $query->with('stockItem'));
     }
 
     public static function getPages(): array

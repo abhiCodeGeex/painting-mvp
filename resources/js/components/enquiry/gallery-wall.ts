@@ -3,12 +3,13 @@ import { DIALOG_DESCRIPTION, DIALOG_HEADER, DIALOG_TITLE, UiDialog } from '@/ui/
 import { Icon } from '@/ui/icon';
 import { ChangeDetectionStrategy, Component, computed, input, model } from '@angular/core';
 import { LoaderCircle } from 'lucide';
-import { previewParts, type WallPiece } from './preview-helpers';
+import { hungSize, previewParts, type WallPiece } from './preview-helpers';
 import { Room360 } from './room-360';
 
 /** The artwork itself (picture size) for a line, whatever size reference the customer used. */
 export function lineToPiece(options: CatalogOptions, line: EnquiryLine): WallPiece {
     const parts = previewParts(options, line);
+    const hung = hungSize(line);
     const surround = 2 * ((parts.frame?.width_mm ?? 0) + (parts.mat?.border_mm ?? 0));
     const outer = line.size_reference === 'outer';
     return {
@@ -16,13 +17,14 @@ export function lineToPiece(options: CatalogOptions, line: EnquiryLine): WallPie
         title: line.display_title,
         imageUrl: line.preview_image,
         detailUrl: line.detail_image ?? null,
-        widthMm: outer ? Math.max(50, line.width_mm - surround) : line.width_mm,
-        heightMm: outer ? Math.max(50, line.height_mm - surround - (parts.mat?.bottom_weight_mm ?? 0)) : line.height_mm,
+        widthMm: outer ? Math.max(50, hung.width_mm - surround) : hung.width_mm,
+        heightMm: outer ? Math.max(50, hung.height_mm - surround - (parts.mat?.bottom_weight_mm ?? 0)) : hung.height_mm,
         frame: parts.frame,
         mat: parts.mat,
         depthMm: parts.depthMm,
         edgeStyle: line.edge_style,
         glazing: parts.glazing,
+        rotation: line.image_rotation ?? 0,
     };
 }
 

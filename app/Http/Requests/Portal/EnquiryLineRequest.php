@@ -66,6 +66,7 @@ class EnquiryLineRequest extends FormRequest
             'width_mm' => ['required', 'integer', 'min:50', 'max:6000'],
             'height_mm' => ['required', 'integer', 'min:50', 'max:6000'],
             'quantity' => ['required', 'integer', 'min:1', 'max:1000'],
+            'image_rotation' => ['nullable', 'integer', Rule::in(EnquiryLine::ROTATIONS)],
 
             'quality_tier_id' => ['nullable', Rule::exists('quality_tiers', 'id')->whereNull('deleted_at')],
             'medium_id' => ['nullable', Rule::exists('mediums', 'id')->whereNull('deleted_at')],

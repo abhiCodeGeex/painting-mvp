@@ -6,6 +6,8 @@ use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
 use App\Enums\FramePhotoType;
 use App\Enums\FrameProfile;
+use App\Enums\StockUnit;
+use App\Models\Concerns\HasStock;
 use App\Models\Concerns\IsMaster;
 use App\Support\MediaUrl;
 use Illuminate\Database\Eloquent\Model;
@@ -20,7 +22,15 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  */
 class Frame extends Model implements HasMedia
 {
-    use InteractsWithMedia, IsMaster;
+    use HasStock, InteractsWithMedia, IsMaster;
+
+    /**
+     * Moulding is stocked in metres.
+     */
+    public function stockUnit(): StockUnit
+    {
+        return StockUnit::Metre;
+    }
 
     protected $guarded = ['id'];
 

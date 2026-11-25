@@ -1,7 +1,7 @@
 {
   "key": "dining",
   "title": "Dining room",
-  "faceSize": 1024,
+  "faceSize": 2048,
   "faces": {
     "f": {
       "dir": [
@@ -105,8 +105,17 @@
   "wallAlbedo": 0.8,
   "knee": 0.8,
   "exposure": [
-    0.6257,
-    1.1573,
-    2.0923
-  ]
+    0.6265,
+    1.1572,
+    2.0904
+  ],
+  "detail": {
+    "file": "detail.webp",
+    "mask": "detail-mask.webp",
+    "size": 4096,
+    "u0": 0.264706,
+    "u1": 0.735294,
+    "v0": 0.328456,
+    "v1": 0.799044
+  }
 }

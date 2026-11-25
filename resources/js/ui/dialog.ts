@@ -48,6 +48,8 @@ export class UiDialog implements OnDestroy {
     readonly open = model(false);
     /** Extra classes for the panel (e.g. "sm:max-w-4xl"). */
     readonly contentClass = input('');
+    /** Asked before the backdrop, Escape or the X closes the dialog; return false to keep it open. */
+    readonly beforeClose = input<(() => boolean) | null>(null);
     protected readonly X = X;
     private host: ElementRef<HTMLElement> = inject(ElementRef);
     private locked = false;
@@ -65,6 +67,8 @@ export class UiDialog implements OnDestroy {
     }
 
     close(): void {
+        const guard = this.beforeClose();
+        if (guard && !guard()) return;
         this.open.set(false);
     }
 

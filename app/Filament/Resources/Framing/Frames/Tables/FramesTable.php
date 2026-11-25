@@ -39,10 +39,11 @@ class FramesTable
             MasterTable::mm('profile_width_mm', 'Width'),
             MasterTable::mm('profile_depth_mm', 'Depth')->toggleable(),
             MasterTable::money('price_per_m', 'Cost / m'),
+            MasterTable::stock(),
         ], [
             SelectFilter::make('material')->options(FrameMaterial::class),
             SelectFilter::make('finish')->options(FrameFinish::class),
             SelectFilter::make('profile')->label('Shape')->options(FrameProfile::class),
-        ])->modifyQueryUsing(fn ($query) => $query->with('media'));
+        ])->modifyQueryUsing(fn ($query) => $query->with(['media', 'stockItem']));
     }
 }

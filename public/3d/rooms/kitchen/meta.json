@@ -1,7 +1,7 @@
 {
   "key": "kitchen",
   "title": "Kitchen",
-  "faceSize": 1024,
+  "faceSize": 2048,
   "faces": {
     "f": {
       "dir": [
@@ -105,17 +105,186 @@
   "wallAlbedo": 0.8,
   "knee": 0.8,
   "exposure": [
-    0.7776,
-    1.4124,
-    2.4908
+    0.7749,
+    1.4021,
+    2.4925
   ],
   "detail": {
     "file": "detail.webp",
     "mask": "detail-mask.webp",
-    "size": 2048,
+    "size": 4096,
     "u0": 0.277778,
     "u1": 0.722222,
     "v0": 0.320625,
     "v1": 0.765069
+  },
+  "layers": {
+    "empty": {
+      "faces": "<face>-empty.webp",
+      "mask": "<face>-empty-mask.webp",
+      "facesList": [
+        "f",
+        "r",
+        "b",
+        "l",
+        "d"
+      ],
+      "hasDetail": false,
+      "detailSkipped": true
+    },
+    "items": [
+      {
+        "key": "rug",
+        "label": "Rug",
+        "default": false,
+        "faces": {
+          "f": {
+            "file": "L-rug-f.webp",
+            "obj": "L-rug-f-obj.webp",
+            "rect": [
+              0.018555,
+              0.0,
+              0.981445,
+              0.317383
+            ]
+          }
+        }
+      },
+      {
+        "key": "banquette",
+        "label": "Banquette",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-banquette-f.webp",
+            "obj": "L-banquette-f-obj.webp",
+            "rect": [
+              0.094238,
+              0.196289,
+              0.905762,
+              0.450684
+            ]
+          }
+        }
+      },
+      {
+        "key": "plants",
+        "label": "Plants",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-plants-f.webp",
+            "obj": "L-plants-f-obj.webp",
+            "rect": [
+              0.710938,
+              0.229004,
+              1.0,
+              0.333008
+            ]
+          },
+          "r": {
+            "file": "L-plants-r.webp",
+            "obj": "L-plants-r-obj.webp",
+            "rect": [
+              0.0,
+              0.024414,
+              1.0,
+              0.421387
+            ]
+          },
+          "b": {
+            "file": "L-plants-b.webp",
+            "obj": "L-plants-b-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.231934,
+              0.415039
+            ]
+          }
+        }
+      },
+      {
+        "key": "table",
+        "label": "Bistro table & chairs",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-table-f.webp",
+            "obj": "L-table-f-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.440918
+            ]
+          },
+          "d": {
+            "file": "L-table-d.webp",
+            "obj": "L-table-d-obj.webp",
+            "rect": [
+              0.0,
+              0.92674,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "island_decor",
+        "label": "Vase & plant on the island",
+        "default": false,
+        "faces": {
+          "b": {
+            "file": "L-island_decor-b.webp",
+            "obj": "L-island_decor-b-obj.webp",
+            "rect": [
+              0.902832,
+              0.0,
+              1.0,
+              0.51123
+            ]
+          },
+          "l": {
+            "file": "L-island_decor-l.webp",
+            "obj": "L-island_decor-l-obj.webp",
+            "rect": [
+              0.0,
+              0.223633,
+              0.487305,
+              0.483398
+            ]
+          }
+        }
+      },
+      {
+        "key": "stools",
+        "label": "Bar stools",
+        "default": true,
+        "faces": {
+          "b": {
+            "file": "L-stools-b.webp",
+            "obj": "L-stools-b-obj.webp",
+            "rect": [
+              0.410156,
+              0.0,
+              1.0,
+              0.270996
+            ]
+          },
+          "d": {
+            "file": "L-stools-d.webp",
+            "obj": "L-stools-d-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.559707,
+              0.487179
+            ]
+          }
+        }
+      }
+    ]
   }
 }

@@ -1,7 +1,7 @@
 import type { CatalogOptions, EnquiryLine, LineEstimate } from '@/types/portal';
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { FramedArt } from './framed-art';
-import { outerSize, previewParts } from './preview-helpers';
+import { hungSize, outerSize, previewParts } from './preview-helpers';
 import { LineEstimateTag } from './price-estimate';
 
 /** Compact summary of one artwork line with a small framed thumbnail. Actions go in <ng-content>. */
@@ -14,11 +14,12 @@ import { LineEstimateTag } from './price-estimate';
             <div class="flex size-32 shrink-0 items-center justify-center rounded-lg" [style.background]="line().wall_colour ?? '#EDE8E1'">
                 <framed-art
                     [imageUrl]="line().preview_image"
-                    [widthMm]="line().width_mm"
-                    [heightMm]="line().height_mm"
+                    [widthMm]="hung().width_mm"
+                    [heightMm]="hung().height_mm"
                     [frame]="parts().frame"
                     [mat]="parts().mat"
                     [depthMm]="parts().depthMm"
+                    [rotation]="line().image_rotation ?? 0"
                     [scale]="scale()"
                 />
             </div>
@@ -45,8 +46,9 @@ export class LineCard {
     readonly estimate = input<LineEstimate | undefined>(undefined);
 
     protected parts = computed(() => previewParts(this.options(), this.line()));
+    protected hung = computed(() => hungSize(this.line()));
     protected scale = computed(() => {
-        const outer = outerSize(this.line().width_mm, this.line().height_mm, this.parts().frame, this.parts().mat);
+        const outer = outerSize(this.hung().width_mm, this.hung().height_mm, this.parts().frame, this.parts().mat);
         return 110 / Math.max(outer.width, outer.height);
     });
     protected details = computed(() => {

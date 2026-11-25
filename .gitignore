@@ -33,3 +33,7 @@ yarn-error.log
 # Offline room renderer sources (downloaded by docker/render/fetch_assets.py)
 /docker/render/assets/
 /docker/render/out/
+
+# Render inputs (regenerable) and runtime media temp files
+/kaggle-render/*.zip
+/storage/media-library

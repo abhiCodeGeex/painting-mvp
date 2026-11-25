@@ -2,9 +2,11 @@
 
 namespace App\Models;
 
+use App\Enums\StockUnit;
 use App\Enums\SubstrateFinish;
 use App\Enums\SubstrateMaterial;
 use App\Enums\SubstrateUnit;
+use App\Models\Concerns\HasStock;
 use App\Models\Concerns\IsMaster;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -14,7 +16,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  */
 class Substrate extends Model
 {
-    use IsMaster;
+    use HasStock, IsMaster;
+
+    /**
+     * Stocked in the unit it is bought in (sheets, rolls or m²).
+     */
+    public function stockUnit(): StockUnit
+    {
+        return StockUnit::tryFrom((string) $this->unit?->value) ?? StockUnit::Sheet;
+    }
 
     protected $guarded = ['id'];
 

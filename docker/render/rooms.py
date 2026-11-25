@@ -4,6 +4,9 @@ Renders the photoreal 360° rooms used by the "360° room" preview (resources/js
     docker compose --profile render run --rm render --python docker/render/rooms.py -- --room living
     docker compose --profile render run --rm render --python docker/render/rooms.py -- --room all --size 2048 --samples 160
     ... -- --room living --size 384 --samples 24 --preview     (quick composition check, written to docker/render/out)
+    ... -- --room all --samples 96 --layers    (switchable furniture for rooms already rendered: see "layers" below)
+    ... -- --room all --check-items            (list each room's switchable furniture, no rendering)
+    ... --out /work/some/dir                   (write rooms there instead of public/3d/rooms)
 
 For each room it builds the scene from CC0 Poly Haven assets (docker/render/fetch_assets.py), renders a cube
 panorama from one eye point with Cycles (6 faces, 90° each, OpenImageDenoise) and writes to public/3d/rooms/<room>/:
@@ -34,7 +37,7 @@ from mathutils import Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, 'assets')
 OUT_TMP = os.path.join(HERE, 'out')
-PUBLIC = os.path.abspath(os.path.join(HERE, '..', '..', 'public', '3d', 'rooms'))
+PUBLIC = os.path.abspath(os.path.join(HERE, '..', '..', 'public', '3d', 'rooms'))  # '--out <dir>' writes there instead
 
 WALL_ALBEDO = 0.8      # linear albedo the walls are rendered with
 LIGHT_SCALE = 2.0      # light.webp stores light / LIGHT_SCALE
@@ -66,96 +69,152 @@ def room_configs():
             floor=('wood_floor', 2.2, (1.0, 1.0, 1.0)), window=dict(side='l', centre=1.7, width=2.0, sill=0.35, top=2.66),
             drape=(0.36, 0.35, 0.33),
             props=[
-                dict(asset='sofa_03', at=(0, 'wall'), rot=0, sx=0.8),
-                dict(asset='side_table_01', at=(1.4, 'wall'), rot=0, gap=0.12),
-                dict(asset='ceramic_vase_02', on='side_table_01', rot=0),
-                dict(asset='modern_coffee_table_01', at=(0, 1.95), rot=90),
-                dict(asset='potted_plant_01', at=(-2.45, 'wall'), rot=30, gap=0.25),
-                dict(asset='mid_century_lounge_chair', at=(2.05, 1.15), rot=-125),
+                dict(asset='sofa_03', at=(0, 'wall'), rot=0, sx=0.8, item='sofa'),
+                dict(asset='side_table_01', at=(1.4, 'wall'), rot=0, gap=0.12, item='side_table'),
+                dict(asset='ceramic_vase_02', on='side_table_01', rot=0, item='side_table'),
+                dict(asset='modern_coffee_table_01', at=(0, 1.95), rot=90, item='coffee_table'),
+                dict(asset='potted_plant_01', at=(-2.45, 'wall'), rot=30, gap=0.25, item='plants'),
+                dict(asset='mid_century_lounge_chair', at=(2.05, 1.15), rot=-125, item='lounge_chair'),
                 dict(asset='modern_ceiling_lamp_01', at=(0, -0.4), rot=0, ceiling=True),
-                dict(asset='potted_plant_02', at=(-2.45, -2.2), rot=0),
-                dict(asset='ClassicNightstand_01', at=(2.6, -1.4), rot=-90),
-                dict(asset='ceramic_vase_01', on='ClassicNightstand_01', rot=0),
+                dict(asset='potted_plant_02', at=(-2.45, -2.2), rot=0, item='plants'),
+                dict(asset='ClassicNightstand_01', at=(2.6, -1.4), rot=-90, item='cabinet'),
+                dict(asset='ceramic_vase_01', on='ClassicNightstand_01', rot=0, item='cabinet'),
             ],
-            extras=[dict(kind='books', on='modern_coffee_table_01', n=3, seed=3, dx=-0.2)],
-            rug=dict(at=(0, 2.0), size=(2.8, 2.0), tint=(0.36, 0.33, 0.29)),
+            extras=[dict(kind='books', on='modern_coffee_table_01', n=3, seed=3, dx=-0.2, item='coffee_table')],
+            rug=dict(at=(0, 2.0), size=(2.8, 2.0), tint=(0.36, 0.33, 0.29), item='rug'),
+            # Furniture the customer can switch off (in the room by default) or add (layer_extras, not in the
+            # normal render): rendered as layers by --layers. Every object without an item stays in the empty room.
+            items=dict(sofa='Sofa', side_table='Side table', coffee_table='Coffee table', lounge_chair='Lounge chair',
+                       plants='Plants', cabinet='Side cabinet', rug='Rug'),
+            layer_extras=[
+                dict(key='armchair', label='Armchair',
+                     props=[dict(asset='modern_arm_chair_01', at=(-2.05, 1.15), rot=125)]),
+                dict(key='sideboard', label='Sideboard',
+                     props=[dict(asset='modern_wooden_cabinet', at=(0.2, 'back'), rot=180, gap=0.04),
+                            dict(asset='brass_vase_01', on='modern_wooden_cabinet', rot=0, dx=0.7)]),
+            ],
         ),
         'bedroom': dict(
             title='Bedroom', width=5.0, front=3.6, back=2.0, height=2.9, eye=1.45,
             floor=('rectangular_parquet', 2.0, (1.0, 1.0, 1.0)), window=dict(side='r', centre=1.45, width=1.6, sill=0.55, top=2.56),
             drape=(0.42, 0.42, 0.42),
             props=[
-                dict(asset='modern_bed', at=(0, 'wall'), gap=0.07),
-                dict(asset='ClassicNightstand_01', at=(-1.38, 'wall'), rot=0, gap=0.07),
-                dict(asset='ClassicNightstand_01', at=(1.38, 'wall'), rot=0, gap=0.07),
-                dict(asset='ceramic_vase_01', on='ClassicNightstand_01', rot=0),
-                dict(asset='potted_plant_04', at=(-2.05, 'wall'), rot=0, gap=0.2),
+                dict(asset='modern_bed', at=(0, 'wall'), gap=0.07, item='bed'),
+                dict(asset='ClassicNightstand_01', at=(-1.38, 'wall'), rot=0, gap=0.07, item='bedside'),
+                dict(asset='ClassicNightstand_01', at=(1.38, 'wall'), rot=0, gap=0.07, item='bedside'),
+                dict(asset='ceramic_vase_01', on='ClassicNightstand_01', rot=0, item='bedside'),
+                dict(asset='potted_plant_04', at=(-2.05, 'wall'), rot=0, gap=0.2, item='plant'),
             ],
-            extras=[dict(kind='headboard_panel'), dict(kind='bedside_pendants'), dict(kind='window_seat')],
-            rug=dict(at=(0, 1.6), size=(2.6, 1.8), tint=(0.3, 0.29, 0.28)),
+            extras=[dict(kind='headboard_panel', item='panel'), dict(kind='bedside_pendants'), dict(kind='window_seat')],
+            rug=dict(at=(0, 1.6), size=(2.6, 1.8), tint=(0.3, 0.29, 0.28), item='rug'),
+            items=dict(bed='Bed', bedside='Bedside tables', panel='Slatted wall panel', plant='Plant', rug='Rug'),
+            layer_extras=[
+                dict(key='armchair', label='Armchair',
+                     props=[dict(asset='modern_arm_chair_01', at=(-1.85, 0.5), rot=75)]),
+                dict(key='dresser', label='Dresser',
+                     props=[dict(asset='modern_wooden_cabinet', at=(0, 'back'), rot=180, gap=0.04),
+                            dict(asset='ceramic_vase_03', on='modern_wooden_cabinet', rot=0, dx=0.75),
+                            dict(asset='potted_plant_04', on='modern_wooden_cabinet', rot=0, dx=-0.7)]),
+            ],
         ),
         'kitchen': dict(
             title='Kitchen', width=5.4, front=3.6, back=2.6, height=2.9, eye=1.45,
             floor=('wood_floor', 2.2, (1.0, 0.98, 0.95)), window=dict(side='r', centre=0.9, width=1.8, sill=0.7, top=2.56),
             drape=(0.55, 0.52, 0.47),
             props=[
-                dict(asset='dining_chair_02', at=(-0.5, 1.95), rot=0),
-                dict(asset='dining_chair_02', at=(0.5, 1.95), rot=0),
-                dict(asset='potted_plant_04', at=(2.3, 'wall'), rot=0, gap=0.25),
-                dict(asset='potted_plant_02', at=(2.25, -2.1), rot=0),
+                dict(asset='dining_chair_02', at=(-0.5, 1.95), rot=0, item='table'),
+                dict(asset='dining_chair_02', at=(0.5, 1.95), rot=0, item='table'),
+                dict(asset='potted_plant_04', at=(2.3, 'wall'), rot=0, gap=0.25, item='plants'),
+                dict(asset='potted_plant_02', at=(2.25, -2.1), rot=0, item='plants'),
             ],
             extras=[dict(kind='kitchen')],
             rug=None,
+            # loose furniture inside the fitted kitchen (extra_kitchen), by object name prefix
+            item_names=dict(table=['k-table-'], banquette=['k-bench'], stools=['stool-']),
+            items=dict(table='Bistro table & chairs', banquette='Banquette', stools='Bar stools', plants='Plants'),
+            layer_extras=[
+                dict(key='rug', label='Rug', rug=dict(at=(0, 2.45), size=(2.2, 1.7), tint=(0.42, 0.38, 0.32))),
+                dict(key='island_decor', label='Vase & plant on the island',
+                     props=[dict(asset='ceramic_vase_03', on='k-island-top', rot=0, dy=-0.45),
+                            dict(asset='potted_plant_04', on='k-island-top', rot=0, dy=0.35)]),
+            ],
         ),
         'office': dict(
             title='Office', width=5.0, front=3.0, back=2.5, height=2.9, eye=1.45,
             floor=('herringbone_parquet', 1.6, (1.0, 1.0, 1.0)), window=dict(side='l', centre=1.2, width=1.8, sill=0.8, top=2.56),
             drape=(0.3, 0.32, 0.35),
             props=[
-                dict(asset='metal_office_desk', at=(0, 'wall'), rot=0, gap=0.05),
-                dict(asset='modern_arm_chair_01', at=(0, 2.0), rot=180),
-                dict(asset='desk_lamp_arm_01', on='metal_office_desk', rot=20, dx=-0.82),
-                dict(asset='potted_plant_02', at=(-2.0, -1.9), rot=0),
+                dict(asset='metal_office_desk', at=(0, 'wall'), rot=0, gap=0.05, item='desk'),
+                dict(asset='modern_arm_chair_01', at=(0, 2.0), rot=180, item='chair'),
+                dict(asset='desk_lamp_arm_01', on='metal_office_desk', rot=20, dx=-0.82, item='desk'),
+                dict(asset='potted_plant_02', at=(-2.0, -1.9), rot=0, item='plant'),
             ],
-            extras=[dict(kind='shelving', side='r', centre=0.2, width=2.2),
-                    dict(kind='books', on='metal_office_desk', n=2, seed=7, dx=0.55)],
-            rug=dict(at=(0, 1.6), size=(2.4, 1.8), tint=(0.22, 0.24, 0.26)),
+            extras=[dict(kind='shelving', side='r', centre=0.2, width=2.2, item='shelving'),
+                    dict(kind='books', on='metal_office_desk', n=2, seed=7, dx=0.55, item='desk')],
+            rug=dict(at=(0, 1.6), size=(2.4, 1.8), tint=(0.22, 0.24, 0.26), item='rug'),
+            items=dict(desk='Desk', chair='Desk chair', shelving='Bookshelf', plant='Plant', rug='Rug'),
+            layer_extras=[
+                dict(key='lounge_chair', label='Lounge chair & side table',
+                     props=[dict(asset='mid_century_lounge_chair', at=(1.45, -1.5), rot=-135),
+                            dict(asset='side_table_01', at=(2.15, -2.15), rot=0),
+                            dict(asset='ceramic_vase_03', on='side_table_01', rot=0)]),
+                dict(key='desk_plant', label='Plant on the desk',
+                     props=[dict(asset='potted_plant_04', on='metal_office_desk', rot=0, dx=-0.4)]),
+            ],
         ),
         'dining': dict(
             title='Dining room', width=6.0, front=3.4, back=3.2, height=3.0, eye=1.45,
             floor=('herringbone_parquet', 1.6, (0.92, 0.9, 0.88)), window=dict(side='r', centre=1.6, width=2.0, sill=0.5, top=2.66),
             drape=(0.45, 0.4, 0.34),
             props=[
-                dict(asset='modern_wooden_cabinet', at=(0, 'wall'), rot=0, gap=0.04),
-                dict(asset='ceramic_vase_03', on='modern_wooden_cabinet', rot=0, dx=0.55),
-                dict(asset='modern_dining_table', at=(0, -1.6)),
-                dict(asset='dining_chair_02', beside='dining_table', side='l', along=-0.45, rot=-90),
-                dict(asset='dining_chair_02', beside='dining_table', side='l', along=0.45, rot=-90),
-                dict(asset='dining_chair_02', beside='dining_table', side='r', along=-0.45, rot=90),
-                dict(asset='dining_chair_02', beside='dining_table', side='r', along=0.45, rot=90),
+                dict(asset='modern_wooden_cabinet', at=(0, 'wall'), rot=0, gap=0.04, item='sideboard'),
+                dict(asset='ceramic_vase_03', on='modern_wooden_cabinet', rot=0, dx=0.55, item='sideboard'),
+                dict(asset='modern_dining_table', at=(0, -1.6), item='table'),
+                dict(asset='dining_chair_02', beside='dining_table', side='l', along=-0.45, rot=-90, item='chairs'),
+                dict(asset='dining_chair_02', beside='dining_table', side='l', along=0.45, rot=-90, item='chairs'),
+                dict(asset='dining_chair_02', beside='dining_table', side='r', along=-0.45, rot=90, item='chairs'),
+                dict(asset='dining_chair_02', beside='dining_table', side='r', along=0.45, rot=90, item='chairs'),
                 dict(asset='modern_ceiling_lamp_01', at=(0, -1.6), rot=0, ceiling=True),
-                dict(asset='ceramic_vase_02', on='dining_table', rot=0, dx=0.0),
-                dict(asset='potted_plant_01', at=(-2.5, 'wall'), rot=0, gap=0.3),
+                dict(asset='ceramic_vase_02', on='dining_table', rot=0, dx=0.0, item='table'),
+                dict(asset='potted_plant_01', at=(-2.5, 'wall'), rot=0, gap=0.3, item='plant'),
             ],
-            extras=[dict(kind='books', on='modern_wooden_cabinet', n=3, seed=11, dx=-0.6)],
-            rug=dict(at=(0, -1.6), size=(2.4, 3.0), tint=(0.34, 0.3, 0.26)),
+            extras=[dict(kind='books', on='modern_wooden_cabinet', n=3, seed=11, dx=-0.6, item='sideboard')],
+            rug=dict(at=(0, -1.6), size=(2.4, 3.0), tint=(0.34, 0.3, 0.26), item='rug'),
+            items=dict(sideboard='Sideboard', table='Dining table', chairs='Dining chairs', plant='Plant', rug='Rug'),
+            layer_extras=[
+                dict(key='console', label='Console table',
+                     props=[dict(asset='ClassicConsole_01', at=('lwall', 1.0), rot=90, gap=0.04),
+                            dict(asset='brass_vase_01', on='ClassicConsole_01', rot=0, dy=0.4)]),
+                dict(key='plant_right', label='Second plant',
+                     props=[dict(asset='potted_plant_02', at=(1.8, 'wall'), rot=40, gap=0.25)]),
+            ],
         ),
         'lobby': dict(
             title='Hotel lobby', width=8.0, front=4.2, back=3.0, height=3.6, eye=1.5,
             floor=('marble_01', 2.4, (1.0, 1.0, 1.0)), window=dict(side='r', centre=1.8, width=2.6, sill=0.3, top=3.26),
             drape=(0.3, 0.26, 0.22),
             props=[
-                dict(asset='ClassicConsole_01', at=(0, 'wall'), rot=0, gap=0.04),
-                dict(asset='brass_vase_01', on='ClassicConsole_01', rot=0, dx=-0.45),
-                dict(asset='ArmChair_01', at=(-1.55, 2.1), rot=-80),
-                dict(asset='ArmChair_01', at=(1.55, 2.1), rot=80),
-                dict(asset='coffee_table_round_01', at=(0, 2.1), rot=0),
-                dict(asset='potted_plant_02', at=(-3.3, 'wall'), rot=0, gap=0.3),
-                dict(asset='potted_plant_02', at=(3.3, 'wall'), rot=60, gap=0.3),
+                dict(asset='ClassicConsole_01', at=(0, 'wall'), rot=0, gap=0.04, item='console'),
+                dict(asset='brass_vase_01', on='ClassicConsole_01', rot=0, dx=-0.45, item='console'),
+                dict(asset='ArmChair_01', at=(-1.55, 2.1), rot=-80, item='armchairs'),
+                dict(asset='ArmChair_01', at=(1.55, 2.1), rot=80, item='armchairs'),
+                dict(asset='coffee_table_round_01', at=(0, 2.1), rot=0, item='coffee_table'),
+                dict(asset='potted_plant_02', at=(-3.3, 'wall'), rot=0, gap=0.3, item='plants'),
+                dict(asset='potted_plant_02', at=(3.3, 'wall'), rot=60, gap=0.3, item='plants'),
             ],
             extras=[dict(kind='wall_panels', sides=('l', 'b')),
-                    dict(kind='books', on='coffee_table_round_01', n=2, seed=21)],
-            rug=dict(at=(0, 2.1), size=(3.4, 2.4), tint=(0.28, 0.22, 0.18)),
+                    dict(kind='books', on='coffee_table_round_01', n=2, seed=21, item='coffee_table')],
+            rug=dict(at=(0, 2.1), size=(3.4, 2.4), tint=(0.28, 0.22, 0.18), item='rug'),
+            items=dict(console='Console', armchairs='Armchairs', coffee_table='Coffee table', plants='Plants', rug='Rug'),
+            layer_extras=[
+                dict(key='sofa', label='Sofa & side tables',
+                     props=[dict(asset='sofa_03', at=(0, 'back'), rot=180, sx=0.8, gap=0.06),
+                            dict(asset='side_table_01', at=(-1.5, 'back'), rot=0, gap=0.1),
+                            dict(asset='side_table_01', at=(1.5, 'back'), rot=0, gap=0.1)]),
+                dict(key='sideboard', label='Sideboard',
+                     props=[dict(asset='modern_wooden_cabinet', at=('lwall', 0.4), rot=90, gap=0.05),
+                            dict(asset='ceramic_vase_01', on='modern_wooden_cabinet', rot=0, dy=-0.6)]),
+            ],
         ),
     }
 
@@ -164,7 +223,7 @@ def room_configs():
 
 def args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-    opts = {'room': 'living', 'size': 2048, 'samples': 160, 'preview': False, 'detail_only': False, 'detail_size': 2048}
+    opts = {'room': 'living', 'size': 2048, 'samples': 160, 'preview': False, 'detail_only': False, 'detail_size': 2048, 'device': 'CPU'}
     i = 0
     while i < len(argv):
         key = argv[i].lstrip('-')
@@ -174,6 +233,10 @@ def args():
             opts['detail_only'] = True
         elif key == 'zone-only':
             opts['zone_only'] = True
+        elif key == 'layers':
+            opts['layers'] = True
+        elif key == 'check-items':
+            opts['check_items'] = True
         else:
             opts[key] = argv[i + 1]
             i += 1
@@ -327,6 +390,79 @@ def colour_k(kelvin):
 
 # --------------------------------------------------------------------------------------------- scene
 
+def _object_names():
+    return {o.name for o in bpy.data.objects}
+
+
+def _tag_item(before, item, extra=False):
+    """Mark every object created since `before` as part of a switchable furniture item (see --layers)."""
+    if not item:
+        return
+    for o in bpy.data.objects:
+        if o.name not in before and not o.get('item'):
+            o['item'] = item
+            if extra:
+                o['layer_extra'] = True
+
+
+def rug(r, name='rug'):
+    wool = textured(name, 'wool_boucle', 0.35, flat=r['tint'])
+    (rx, ry), (rw, rd) = r['at'], r['size']
+    box(name, rx - rw / 2, rx + rw / 2, ry - rd / 2, ry + rd / 2, 0, 0.012, wool)
+
+
+def place_prop(cfg, p, placed):
+    """Import (or build) one piece of furniture and put it in place: against the art wall ('wall'), the back
+    wall ('back'), a side wall ('lwall'/'rwall'), on top of another piece ('on'), beside a table, or at (x, y)."""
+    W, F, B, H = cfg['width'], cfg['front'], cfg['back'], cfg['height']
+    y0, y1 = -B, F
+    if p['asset'] == 'modern_dining_table':
+        objs = modern_dining_table(*p['at'])
+        placed['dining_table'] = world_bbox(objs)
+        return
+    if p['asset'] == 'modern_bed':
+        objs = modern_bed(p['at'][0], y1 - p.get('gap', 0.02))
+        placed['modern_bed'] = world_bbox(objs)
+        return
+    root, objs = import_asset(p['asset'])
+    root.rotation_euler = (0, 0, math.radians(p.get('rot', 0)))
+    if 'sx' in p:  # narrower/wider without changing the height (e.g. a 2.7 m sofa → a usual 2.2 m)
+        root.scale = (p['sx'], 1, 1)
+    bpy.context.view_layer.update()
+    lo, hi = world_bbox(objs)
+    if 'beside' in p:
+        # A chair along a table's long side, facing it, seat front just under the table edge.
+        base_lo, base_hi = placed[p['beside']]
+        ty = (base_lo.y + base_hi.y) / 2 + p.get('along', 0)
+        depth = hi.x - lo.x
+        tx = base_lo.x - depth / 2 + 0.12 if p['side'] == 'l' else base_hi.x + depth / 2 - 0.12
+        root.location = (tx - (lo.x + hi.x) / 2, ty - (lo.y + hi.y) / 2, -lo.z)
+    elif 'on' in p:
+        if p['on'] in placed:
+            base_lo, base_hi = placed[p['on']]
+        else:  # on a built piece, by object name
+            base_lo, base_hi = world_bbox([o for o in bpy.data.objects if o.name.startswith(p['on'])])
+        bx, by = (base_lo.x + base_hi.x) / 2 + p.get('dx', 0), (base_lo.y + base_hi.y) / 2 + p.get('dy', 0)
+        root.location = (bx - (lo.x + hi.x) / 2, by - (lo.y + hi.y) / 2, base_hi.z - lo.z)
+    else:
+        ax, ay = p['at']
+        if ay == 'wall':
+            ay = y1 - p.get('gap', 0.03) - (hi.y - lo.y) / 2
+        elif ay == 'back':
+            ay = y0 + p.get('gap', 0.03) + (hi.y - lo.y) / 2
+        if ax == 'lwall':
+            ax = -W / 2 + p.get('gap', 0.03) + (hi.x - lo.x) / 2
+        elif ax == 'rwall':
+            ax = W / 2 - p.get('gap', 0.03) - (hi.x - lo.x) / 2
+        z = (H - 0.002 - hi.z) if p.get('ceiling') else -lo.z
+        root.location = (ax - (lo.x + hi.x) / 2, ay - (lo.y + hi.y) / 2, z)
+    bpy.context.view_layer.update()
+    placed[p['asset']] = world_bbox(objs)
+    for o in objs:
+        o['ceiling'] = bool(p.get('ceiling'))
+        o['prop'] = True
+
+
 def build(cfg):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
@@ -397,53 +533,35 @@ def build(cfg):
 
     # rug
     if cfg.get('rug'):
-        r = cfg['rug']
-        wool = textured('rug', 'wool_boucle', 0.35, flat=r['tint'])
-        (rx, ry), (rw, rd) = r['at'], r['size']
-        box('rug', rx - rw / 2, rx + rw / 2, ry - rd / 2, ry + rd / 2, 0, 0.012, wool)
+        before = _object_names()
+        rug(cfg['rug'])
+        _tag_item(before, cfg['rug'].get('item'))
 
     # furniture
     placed = {}
     for p in cfg['props']:
-        if p['asset'] == 'modern_dining_table':
-            objs = modern_dining_table(*p['at'])
-            placed['dining_table'] = world_bbox(objs)
-            continue
-        if p['asset'] == 'modern_bed':
-            objs = modern_bed(p['at'][0], y1 - p.get('gap', 0.02))
-            placed['modern_bed'] = world_bbox(objs)
-            continue
-        root, objs = import_asset(p['asset'])
-        root.rotation_euler = (0, 0, math.radians(p.get('rot', 0)))
-        if 'sx' in p:  # narrower/wider without changing the height (e.g. a 2.7 m sofa → a usual 2.2 m)
-            root.scale = (p['sx'], 1, 1)
-        bpy.context.view_layer.update()
-        lo, hi = world_bbox(objs)
-        if 'beside' in p:
-            # A chair along a table's long side, facing it, seat front just under the table edge.
-            base_lo, base_hi = placed[p['beside']]
-            ty = (base_lo.y + base_hi.y) / 2 + p.get('along', 0)
-            depth = hi.x - lo.x
-            tx = base_lo.x - depth / 2 + 0.12 if p['side'] == 'l' else base_hi.x + depth / 2 - 0.12
-            root.location = (tx - (lo.x + hi.x) / 2, ty - (lo.y + hi.y) / 2, -lo.z)
-        elif 'on' in p:
-            base_lo, base_hi = placed[p['on']]
-            bx, by = (base_lo.x + base_hi.x) / 2 + p.get('dx', 0), (base_lo.y + base_hi.y) / 2
-            root.location = (bx - (lo.x + hi.x) / 2, by - (lo.y + hi.y) / 2, base_hi.z - lo.z)
-        else:
-            ax, ay = p['at']
-            if ay == 'wall':
-                ay = y1 - p.get('gap', 0.03) - (hi.y - lo.y) / 2
-            z = (H - 0.002 - hi.z) if p.get('ceiling') else -lo.z
-            root.location = (ax - (lo.x + hi.x) / 2, ay - (lo.y + hi.y) / 2, z)
-        bpy.context.view_layer.update()
-        placed[p['asset']] = world_bbox(objs)
-        for o in objs:
-            o['ceiling'] = bool(p.get('ceiling'))
-            o['prop'] = True
+        before = _object_names()
+        place_prop(cfg, p, placed)
+        _tag_item(before, p.get('item'))
 
     for extra in cfg.get('extras', []):
-        EXTRAS[extra['kind']](cfg, **{k: v for k, v in extra.items() if k != 'kind'})
+        before = _object_names()
+        EXTRAS[extra['kind']](cfg, **{k: v for k, v in extra.items() if k not in ('kind', 'item')})
+        _tag_item(before, extra.get('item'))
+    for item, prefixes in cfg.get('item_names', {}).items():
+        for o in bpy.data.objects:
+            if not o.get('item') and any(o.name.startswith(pre) for pre in prefixes):
+                o['item'] = item
+
+    # Furniture that is only offered as an optional layer (--layers): not in the normal render.
+    if cfg.get('_layers'):
+        for ex in cfg.get('layer_extras', []):
+            before = _object_names()
+            if ex.get('rug'):
+                rug(ex['rug'], name=f'rug-{ex["key"]}')
+            for p in ex.get('props', []):
+                place_prop(cfg, p, placed)
+            _tag_item(before, ex['key'], extra=True)
 
     lights(cfg, win, side_x, inward, wy0, wy1)
     camera = bpy.data.objects.new('eye', bpy.data.cameras.new('eye'))
@@ -709,6 +827,7 @@ def stool(name, x, y, metal):
         cylinder(f'{name}-leg-{k}', x + 0.14 * math.cos(ang), y + 0.14 * math.sin(ang), 0, 0.62, 0.011, metal, verts=12)
     bpy.ops.mesh.primitive_torus_add(major_radius=0.14, minor_radius=0.008, location=(x, y, 0.24))
     ring = bpy.context.active_object
+    ring.name = f'{name}-ring'
     ring.data.materials.append(metal)
     ring['prop'] = True
 
@@ -921,11 +1040,32 @@ def lights(cfg, win, side_x, inward, wy0, wy1):
     scene.collection.objects.link(fobj)
 
 
-def setup_render(size, samples, outdir):
+def use_gpu():
+    """'--device GPU' renders on NVIDIA (OptiX, else CUDA), e.g. a free Kaggle/Colab GPU; falls back to CPU."""
+    if args().get('device', 'CPU').upper() != 'GPU':
+        return 'CPU'
+    prefs = bpy.context.preferences.addons['cycles'].preferences
+    for kind in ('OPTIX', 'CUDA'):
+        try:
+            prefs.compute_device_type = kind
+            prefs.get_devices()
+        except TypeError:
+            continue
+        gpus = [d for d in prefs.devices if d.type == kind]
+        if gpus:
+            for d in prefs.devices:
+                d.use = d.type == kind
+            print(f'rendering on {kind}: ' + ', '.join(d.name for d in gpus), flush=True)
+            return 'GPU'
+    print('no NVIDIA GPU found, rendering on CPU', flush=True)
+    return 'CPU'
+
+
+def setup_render(size, samples, outdir, item_mask=False):
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
     c = scene.cycles
-    c.device = 'CPU'
+    c.device = use_gpu()
     c.samples = samples
     c.use_adaptive_sampling = True
     c.adaptive_threshold = 0.02
@@ -972,6 +1112,17 @@ def setup_render(size, samples, outdir):
     out.file_slots.new('mask')
     nt.links.new(rl.outputs['Image'], out.inputs['beauty'])
     nt.links.new(idm.outputs['Alpha'], out.inputs['mask'])
+    if item_mask:
+        # Exact (sub-pixel) coverage of the switchable furniture, from Cryptomatte: only the item whose layer
+        # renders is visible, so a matte of every item object is that item.
+        scene.view_layers[0].use_pass_cryptomatte_object = True
+        crypto = nt.nodes.new('CompositorNodeCryptomatteV2')
+        crypto.source = 'RENDER'
+        crypto.scene = scene
+        crypto.matte_id = ','.join(o.name for o in bpy.data.objects if o.get('item') and o.type == 'MESH')
+        nt.links.new(rl.outputs['Image'], crypto.inputs['Image'])
+        out.file_slots.new('item')
+        nt.links.new(crypto.outputs['Matte'], out.inputs['item'])
     return out
 
 
@@ -986,13 +1137,14 @@ def read_exr(path):
     return px.reshape(h, w, 4)[::-1]  # top row first
 
 
-def bloom(img):
-    """A camera lens's soft glow round very bright areas (windows, lamps): what makes a render read as a photo."""
+def bloom(img, w=None):
+    """A camera lens's soft glow round very bright areas (windows, lamps): what makes a render read as a photo.
+    `w` = width of the full image when `img` is a crop of it (the glow radii follow the full image)."""
     bright = np.maximum(img - 1.0, 0.0)
     if not bright.any():
         return img
     glow = np.zeros_like(img)
-    h, w = img.shape[:2]
+    w = w or img.shape[1]
     for radius, weight in ((max(2, w // 256), 0.5), (max(4, w // 96), 0.35), (max(8, w // 32), 0.15)):
         k = np.exp(-0.5 * (np.arange(-3 * radius, 3 * radius + 1) / radius) ** 2)
         k /= k.sum()
@@ -1055,7 +1207,7 @@ def free_zone(cfg):
     left, right = -W / 2 + 0.25, W / 2 - 0.25
     tops = {}
     for o in bpy.data.objects:
-        if o.type != 'MESH' or not o.get('prop') or o.get('ceiling'):
+        if o.type != 'MESH' or not o.get('prop') or o.get('ceiling') or o.get('layer_extra'):
             continue
         root = o
         while root.parent:
@@ -1123,7 +1275,7 @@ def render_room(key, cfg, size, samples, preview):
     exposure = exposure * wb
     print(f'[{key}] exposure ×{exposure}', flush=True)
 
-    dest = os.path.join(PUBLIC, key) if not preview else os.path.join(OUT_TMP, f'{key}-preview')
+    dest = os.path.join(ROOT, key) if not preview else os.path.join(OUT_TMP, f'{key}-preview')
     os.makedirs(dest, exist_ok=True)
     for name, (beauty, mask) in faces.items():
         enc = srgb(tone(bloom(beauty * exposure)))
@@ -1170,17 +1322,10 @@ def render_room(key, cfg, size, samples, preview):
     print(f'[{key}] done → {dest}', flush=True)
 
 
-def render_detail(key, cfg, size, samples):
-    """A sharper render of the art wall only (the part of the room people zoom into), seen from the same eye
-    through a narrower lens, so it lines up exactly with the forward face. Uses the room's own exposure."""
-    dest = os.path.join(PUBLIC, key)
-    with open(os.path.join(dest, 'meta.json')) as fh:
-        meta = json.load(fh)
-    exposure = np.array(meta['exposure'], dtype=np.float32)
-    camera, _ = build(cfg)
-    zone = free_zone(cfg)
+def detail_frame(cfg, zone):
+    """Window over the art wall's free area (+ a margin), in tangent units of the forward face:
+    (half size, centre x, centre y)."""
     F = cfg['front']
-    # Window over the art wall's free area (+ a margin), in tangent units of the forward face.
     m = 0.2
     # Where artworks hang: the central 2.8 m of the free wall (very wide walls would spread the pixels thin).
     xa, xb = (max(zone['left'], -1.4) - m) / F, (min(zone['right'], 1.4) + m) / F
@@ -1188,15 +1333,37 @@ def render_detail(key, cfg, size, samples):
     half = min(0.95, max(xb - xa, yb - ya) / 2)
     cx = float(np.clip((xa + xb) / 2, -1 + half, 1 - half))
     cy = float(np.clip((ya + yb) / 2, -1 + half, 1 - half))
+    return half, cx, cy
+
+
+def aim_detail(camera, half, cx, cy):
+    camera.rotation_euler = tuple(math.radians(a) for a in FACES['f'][0])
+    camera.data.angle = 2 * math.atan(half)
+    camera.data.shift_x = cx / (2 * half)
+    camera.data.shift_y = cy / (2 * half)
+
+
+def aim_face(camera, name):
+    camera.rotation_euler = tuple(math.radians(a) for a in FACES[name][0])
+    camera.data.angle = math.pi / 2
+    camera.data.shift_x = camera.data.shift_y = 0.0
+
+
+def render_detail(key, cfg, size, samples):
+    """A sharper render of the art wall only (the part of the room people zoom into), seen from the same eye
+    through a narrower lens, so it lines up exactly with the forward face. Uses the room's own exposure."""
+    dest = os.path.join(ROOT, key)
+    with open(os.path.join(dest, 'meta.json')) as fh:
+        meta = json.load(fh)
+    exposure = np.array(meta['exposure'], dtype=np.float32)
+    camera, _ = build(cfg)
+    half, cx, cy = detail_frame(cfg, free_zone(cfg))
     tmp = os.path.join(OUT_TMP, key + '-detail')
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp, exist_ok=True)
     out = setup_render(size, samples, tmp)
     scene = bpy.context.scene
-    camera.rotation_euler = tuple(math.radians(a) for a in FACES['f'][0])
-    camera.data.angle = 2 * math.atan(half)
-    camera.data.shift_x = cx / (2 * half)
-    camera.data.shift_y = cy / (2 * half)
+    aim_detail(camera, half, cx, cy)
     out.file_slots[0].path = 'detail-beauty-'
     out.file_slots[1].path = 'detail-mask-'
     scene.render.filepath = os.path.join(tmp, 'detail-composite')
@@ -1253,31 +1420,493 @@ def wall_light(cfg, face, exposure):
     return out.astype(np.float32), [round(xa, 4), round(xb, 4), round(za, 4), round(zb, 4)]
 
 
+# --------------------------------------------------------------------------------------------- layers
+#
+# '--layers' renders switchable furniture for a room that was rendered normally before (its installed faces,
+# detail, masks and exposure are the base, so everything matches):
+#   <face>-empty.webp (+ -sm, -mask, -mask-sm), detail-empty.webp, detail-empty-mask.webp
+#       the room with every switchable item hidden (walls, windows, curtains, lights and built-ins stay): only
+#       the union of the items' boxes is rendered, feathered into the full render. Only for views where an
+#       item shows (meta.layers.empty.facesList / hasDetail); elsewhere the normal image is already empty.
+#   L-<item>-<face>-obj.webp, L-<item>-detail-obj.webp
+#       grey coverage of the item itself (no shadow), same box as its layer
+#   L-<item>-<face>.webp, L-<item>-detail.webp
+#       RGBA, covering only meta.layers.items[].faces[face].rect (u left→right, v bottom→top, 0..1 of the image).
+#       Alpha-blended (straight alpha, in the image's sRGB values) over the empty room it reproduces the room
+#       with that item: the item itself is opaque, its shadows and contact darkening are black at partial alpha,
+#       so they darken whatever lies under them (a re-painted wall, a rug, another item).
+# Items are listed far → near: composite them in that order.
+
+LAYER_T0, LAYER_T1 = 1.5 / 255, 4.0 / 255   # sRGB difference ignored as noise / fully counted
+LUM = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+_EDGES = [(i, i ^ b) for i in range(8) for b in (1, 2, 4) if i < i ^ b]
+
+
+def smoothstep(e0, e1, x):
+    t = np.clip((x - e0) / (e1 - e0), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def box_blur(a, r=1):
+    h, w = a.shape
+    p = np.pad(a, r, mode='edge')
+    out = np.zeros_like(a)
+    for dy in range(2 * r + 1):
+        for dx in range(2 * r + 1):
+            out += p[dy:dy + h, dx:dx + w]
+    return out / (2 * r + 1) ** 2
+
+
+def layer_items(cfg):
+    """The room's switchable furniture, far → near (rugs first): [dict(key, label, default, objs)]."""
+    by = {}
+    for o in bpy.data.objects:
+        if o.get('item'):
+            by.setdefault(o['item'], []).append(o)
+    decl = [(k, label, True) for k, label in cfg.get('items', {}).items()]
+    decl += [(ex['key'], ex['label'], False) for ex in cfg.get('layer_extras', [])]
+    keys = [k for k, _, _ in decl]
+    missing = [k for k in keys if not any(o.type == 'MESH' for o in by.get(k, []))]
+    stray = [k for k in by if k not in keys]
+    if missing or stray or len(set(keys)) != len(keys):
+        raise SystemExit(f'item list does not resolve: no objects for {missing}, undeclared {stray}, keys {keys}')
+    eye = Vector((0, 0, cfg['eye']))
+    items = []
+    for k, label, default in decl:
+        objs = [o for o in by[k] if o.type == 'MESH']
+        lo, hi = world_bbox(objs)
+        near = Vector((min(max(eye.x, lo.x), hi.x), min(max(eye.y, lo.y), hi.y), min(max(eye.z, lo.z), hi.z)))
+        items.append(dict(key=k, label=label, default=default, objs=objs, flat=hi.z < 0.05, dist=(near - eye).length))
+    items.sort(key=lambda it: (not it['flat'], -it['dist']))
+
+    # Something standing on another item (a plant on the desk) composites after it.
+    boxes = {it['key']: [world_bbox([ob]) for ob in it['objs']] for it in items}
+
+    def rests_on(a, b):
+        for lo_a, hi_a in boxes[a['key']]:
+            if lo_a.z < 0.05:
+                continue
+            cx, cy = (lo_a.x + hi_a.x) / 2, (lo_a.y + hi_a.y) / 2
+            if any(lo.x <= cx <= hi.x and lo.y <= cy <= hi.y and abs(hi.z - lo_a.z) < 0.03 for lo, hi in boxes[b['key']]):
+                return True
+        return False
+
+    for _ in range(len(items) ** 2):
+        swap = next(((i, j) for i in range(len(items)) for j in range(i + 1, len(items)) if rests_on(items[i], items[j])), None)
+        if not swap:
+            break
+        items.insert(swap[1], items.pop(swap[0]))
+    return items
+
+
+def item_boxes(objs, footprint=0.4):
+    """World boxes the item (and its contact shadow: a footprint round each piece) can cover."""
+    boxes = []
+    for o in objs:
+        lo, hi = world_bbox([o])
+        boxes.append((lo, hi))
+        # Floor-standing pieces get the full footprint; things on a shelf/table or flat on the floor (a rug) little.
+        fp = footprint if lo.z < 0.05 and hi.z > 0.05 else 0.08
+        boxes.append((Vector((lo.x - fp, lo.y - fp, lo.z)), Vector((hi.x + fp, hi.y + fp, lo.z + 0.001))))
+    return boxes
+
+
+def project_rect(cam, boxes, margin=0.12, near=0.02):
+    """Screen rectangle (u0, v0, u1, v1; v up) of the boxes in the camera's current view, + margin; None if off screen."""
+    from bpy_extras.object_utils import world_to_camera_view
+    scene = bpy.context.scene
+    to_cam = cam.matrix_world.inverted()
+    us, vs = [], []
+    for lo, hi in boxes:
+        cs = [to_cam @ Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+        pts = [c for c in cs if -c.z > near]
+        for i, j in _EDGES:  # where the box crosses the near plane
+            da, db = -cs[i].z - near, -cs[j].z - near
+            if da * db < 0:
+                pts.append(cs[i].lerp(cs[j], da / (da - db)))
+        for c in pts:
+            p = world_to_camera_view(scene, cam, cam.matrix_world @ c)
+            us.append(p.x)
+            vs.append(p.y)
+    if not us:
+        return None
+    u0, u1, v0, v1 = max(min(us), 0.0), min(max(us), 1.0), max(min(vs), 0.0), min(max(vs), 1.0)
+    if u1 - u0 <= 0 or v1 - v0 <= 0:
+        return None
+    mu, mv = (u1 - u0) * margin, (v1 - v0) * margin
+    return max(u0 - mu, 0.0), max(v0 - mv, 0.0), min(u1 + mu, 1.0), min(v1 + mv, 1.0)
+
+
+def rect_pixels(rect, px):
+    """(u0, v0, u1, v1) → pixel box (x0, y0, x1, y1), rows top first."""
+    u0, v0, u1, v1 = rect
+    return (max(0, int(math.floor(u0 * px))), max(0, int(math.floor((1 - v1) * px))),
+            min(px, int(math.ceil(u1 * px))), min(px, int(math.ceil((1 - v0) * px))))
+
+
+def render_view(out, tmp, tag, px, box=None):
+    """Render the camera's current view at px × px, or only the pixel box (x0, y0, x1, y1; rows top first)."""
+    scene = bpy.context.scene
+    r = scene.render
+    r.resolution_x = r.resolution_y = px
+    if box:
+        x0, y0, x1, y1 = box
+        r.use_border = True
+        r.use_crop_to_border = True
+        # Blender truncates border × size to whole pixels: a quarter pixel in keeps it exact.
+        r.border_min_x, r.border_max_x = (x0 + 0.25) / px, min(1.0, (x1 + 0.25) / px)
+        r.border_min_y, r.border_max_y = (px - y1 + 0.25) / px, min(1.0, (px - y0 + 0.25) / px)
+    else:
+        r.use_border = False
+    names = ['beauty', 'mask', 'item'][:len(out.file_slots)]
+    for slot, n in zip(out.file_slots, names):
+        slot.path = f'{tag}-{n}-'
+    r.filepath = os.path.join(tmp, f'{tag}-composite')
+    bpy.ops.render.render(write_still=False)
+    frame = scene.frame_current
+    res = {n: read_exr(os.path.join(tmp, f'{tag}-{n}-{frame:04d}.exr')) for n in names}
+    for n in names:
+        os.remove(os.path.join(tmp, f'{tag}-{n}-{frame:04d}.exr'))
+    beauty = res['beauty'][..., :3]
+    if box and beauty.shape[:2] != (box[3] - box[1], box[2] - box[0]):
+        raise SystemExit(f'border render is {beauty.shape[:2]}, expected {(box[3] - box[1], box[2] - box[0])}')
+    return beauty, res['mask'][..., 0], (res['item'][..., 0] if 'item' in res else None)
+
+
+def read_image(path):
+    """An 8-bit image file as stored (no colour conversion), float RGB, rows top first."""
+    img = bpy.data.images.load(path)
+    img.colorspace_settings.name = 'Non-Color'
+    w, h = img.size
+    px = np.empty(w * h * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    bpy.data.images.remove(img)
+    return px.reshape(h, w, 4)[::-1, :, :3].copy()
+
+
+def decode(enc, exposure):
+    """Encoded image → linear light before exposure (inverse sRGB and tone curve). Capped at 1 so that
+    bloom is not applied a second time to what is already baked into it."""
+    y = np.clip(enc, 0, 1)
+    x = np.where(y <= 0.04045, y / 12.92, ((y + 0.055) / 1.055) ** 2.4)
+    s = 1 - KNEE
+    x = np.where(x <= KNEE, x, KNEE - s * np.log(np.maximum(1 - (x - KNEE) / s, 1e-6)))
+    return (np.minimum(x, 1.0) / exposure).astype(np.float32)
+
+
+def encode_patch(canvas, exposure, px, box, sub=None):
+    """Encoded (bloom, tone, sRGB) pixels of `box` from the linear canvas, with the glow computed from the
+    canvas around it like the full image. `sub` = (pixel box, linear pixels) substituted first."""
+    x0, y0, x1, y1 = box
+    m = 3 * max(8, px // 32) + 1
+    bx0, by0, bx1, by1 = max(0, x0 - m), max(0, y0 - m), min(px, x1 + m), min(px, y1 + m)
+    patch = canvas[by0:by1, bx0:bx1].copy()
+    if sub is not None:
+        (p0x, p0y, p1x, p1y), lin = sub
+        patch[p0y - by0:p1y - by0, p0x - bx0:p1x - bx0] = lin
+    enc = srgb(tone(bloom(patch * exposure, w=px)))
+    return enc[y0 - by0:y1 - by0, x0 - bx0:x1 - bx0]
+
+
+def compose_layer(view, item_lin, item_cov, pbox, box, exposure):
+    """RGBA layer over `box` from the item's render over `pbox` (a padded box round it) and the empty room."""
+    px, canvas = view['px'], view['canvas']
+    x0, y0, x1, y1 = box
+    p0x, p0y = pbox[:2]
+    I = encode_patch(canvas, exposure, px, box, (pbox, item_lin))
+    E = encode_patch(canvas, exposure, px, box)
+    cov = np.clip(item_cov[y0 - p0y:y1 - p0y, x0 - p0x:x1 - p0x], 0, 1)
+    LI, LE = I @ LUM, E @ LUM
+    d = box_blur(LI) - box_blur(LE)
+    g = smoothstep(LAYER_T0, LAYER_T1, np.abs(d))
+    # Shadow: black at partial alpha, so it darkens whatever is under it. (Light the item bounces onto its
+    # surroundings is left out: painting the item's own view of them would erase other items behind it.)
+    shade = np.where(d < 0, g * (1 - np.clip(LI / np.maximum(LE, 1e-4), 0, 1)), 0)
+    # The item's own colour at its anti-aliased edges, without the floor/wall it was mixed with.
+    c = cov[..., None]
+    T = np.where(c > 0.02, np.clip((I - (1 - c) * E) / np.maximum(c, 0.02), 0, 1), I)
+    T = np.where(c > 0.98, I, T)
+    A = cov + (1 - cov) * shade
+    C = np.where(A[..., None] > 1e-4, c * T / np.maximum(A, 1e-4)[..., None], I)
+    return np.concatenate([np.clip(C, 0, 1), A[..., None]], axis=2).astype(np.float32), cov
+
+
+def feather(shape, box, px, width=8):
+    """Paste weight for `box`: 0 at its inner edges rising to 1 `width` px inside (none along the image edge)."""
+    x0, y0, x1, y1 = box
+    h, w = shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    big = np.full((h, w), 1e9, dtype=np.float32)
+    dist = big.copy()
+    if x0 > 0:
+        dist = np.minimum(dist, xx)
+    if y0 > 0:
+        dist = np.minimum(dist, yy)
+    if x1 < px:
+        dist = np.minimum(dist, w - 1 - xx)
+    if y1 < px:
+        dist = np.minimum(dist, h - 1 - yy)
+    return np.clip(dist / width, 0, 1)
+
+
+def render_layers(key, cfg, o):
+    """Empty room + one layer per switchable item, rendered only where the items are and pasted into the
+    room's installed full render (its faces, detail and masks give the sizes and the exposure)."""
+    import time
+    t_start = time.time()
+    dest = os.path.join(ROOT, key)
+    meta_path = os.path.join(dest, 'meta.json')
+    if not os.path.isfile(meta_path):
+        raise SystemExit(f'{meta_path} missing: render the room normally first (--layers builds on it)')
+    with open(meta_path) as fh:
+        meta = json.load(fh)
+    exposure = np.array(meta['exposure'], dtype=np.float32)
+    cfg['_layers'] = True
+    camera, _ = build(cfg)
+    zone = free_zone(cfg)
+    items = layer_items(cfg)
+    tmp = os.path.join(OUT_TMP, key + '-layers')
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp, exist_ok=True)
+    out = setup_render(meta['faceSize'], o['samples'], tmp, item_mask=True)
+    scene = bpy.context.scene
+
+    views = [dict(name=n, file=f'{n}.webp', mask=f'{n}-mask.webp') for n in FACES]
+    with_detail = 'detail' in meta and o['detail_size'] > 0
+    if with_detail:
+        half, cx, cy = detail_frame(cfg, zone)
+        d = meta['detail']
+        if abs(d['u0'] - round((cx - half + 1) / 2, 6)) > 1e-5 or abs(d['v0'] - round((cy - half + 1) / 2, 6)) > 1e-5:
+            print(f'[{key}] WARNING: detail framing differs from meta.detail (re-render the detail)', flush=True)
+        views.append(dict(name='detail', file=d['file'], mask=d['mask'], frame=(half, cx, cy)))
+    for view in views:
+        view['base'] = read_image(os.path.join(dest, view['file']))
+        view['base_mask'] = read_image(os.path.join(dest, view['mask']))
+        view['px'] = view['base'].shape[1]
+        view['canvas'] = decode(view['base'], exposure)
+
+    def aim(view):
+        if view['name'] == 'detail':
+            aim_detail(camera, *view['frame'])
+        else:
+            aim_face(camera, view['name'])
+        bpy.context.view_layer.update()  # camera.matrix_world, for project_rect
+
+    def show(keys):
+        for ob in bpy.data.objects:
+            if ob.get('item'):
+                ob.hide_render = ob['item'] not in keys
+
+    def padded(box, px):
+        pad = max(8, px // 64)  # rendered round the box too, so the denoiser sees the same surroundings
+        return (max(0, box[0] - pad), max(0, box[1] - pad), min(px, box[2] + pad), min(px, box[3] + pad))
+
+    # Where each item can show on each view.
+    for it in items:
+        boxes = item_boxes(it['objs'])
+        it['boxes'] = {}
+        for view in views:
+            aim(view)
+            rect = project_rect(camera, boxes)
+            if rect is not None:
+                it['boxes'][view['name']] = rect_pixels(rect, view['px'])
+
+    # 1. The empty room, rendered only over the union of the items' boxes, pasted into the full render.
+    for f in os.listdir(dest):
+        if (f.startswith('L-') or '-empty' in f) and f.endswith('.webp'):
+            os.remove(os.path.join(dest, f))
+    show(())
+    area = full_area = 0
+    empty_faces = []
+    for view in views:
+        n, px = view['name'], view['px']
+        full_area += px * px
+        bs = [it['boxes'][n] for it in items if n in it['boxes']]
+        if not bs:
+            continue
+        ubox = (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+        upad = padded(ubox, px)
+        area += (upad[2] - upad[0]) * (upad[3] - upad[1])
+        aim(view)
+        print(f'[{key}] empty {n} box {ubox} of {px}px', flush=True)
+        lin, mask, _ = render_view(out, tmp, f'empty-{n}', px, upad)
+        view['canvas'][upad[1]:upad[3], upad[0]:upad[2]] = lin
+        x0, y0, x1, y1 = ubox
+        enc = view['base'].copy()
+        w = feather((y1 - y0, x1 - x0), ubox, px)[..., None]
+        enc[y0:y1, x0:x1] = w * encode_patch(view['canvas'], exposure, px, ubox) + (1 - w) * enc[y0:y1, x0:x1]
+        emask = view['base_mask'].copy()
+        emask[y0:y1, x0:x1] = np.clip(mask[y0 - upad[1]:y1 - upad[1], x0 - upad[0]:x1 - upad[0]], 0, 1)[..., None]
+        png, mpng = os.path.join(tmp, f'{n}-empty.png'), os.path.join(tmp, f'{n}-empty-mask.png')
+        save_png(png, enc)
+        save_png(mpng, emask)
+        webp(png, os.path.join(dest, f'{n}-empty.webp'), quality=92, alpha=False)
+        webp(mpng, os.path.join(dest, f'{n}-empty-mask.webp'), quality=90, alpha=False)
+        if n != 'detail':
+            webp(png, os.path.join(dest, f'{n}-empty-sm.webp'), quality=80, resize=512, alpha=False)
+            webp(mpng, os.path.join(dest, f'{n}-empty-mask-sm.webp'), quality=85, resize=512, alpha=False)
+            empty_faces.append(n)
+        else:
+            view['has_empty'] = True
+    t_empty = time.time() - t_start
+
+    # 2. One layer per item, only where it is seen.
+    entries = []
+    for it in items:
+        show({it['key']})
+        entry = {'key': it['key'], 'label': it['label'], 'default': it['default'], 'faces': {}}
+        for view in views:
+            n, px = view['name'], view['px']
+            if n not in it['boxes']:
+                continue
+            box = it['boxes'][n]
+            aim(view)
+            for attempt in range(3):
+                pbox = padded(box, px)
+                print(f'[{key}] {it["key"]} {n} box {box}', flush=True)
+                lin, _, cov = render_view(out, tmp, f'{it["key"]}-{n}', px, pbox)
+                area += (pbox[2] - pbox[0]) * (pbox[3] - pbox[1])
+                layer, obj = compose_layer(view, lin, cov, pbox, box, exposure)
+                A = layer[..., 3]
+                # Shadow still reaching an inner edge of the box: grow that side and render again.
+                w, h = box[2] - box[0], box[3] - box[1]
+                grow = [box[0] > 0 and A[:, :2].max() > 0.2, box[1] > 0 and A[:2, :].max() > 0.2,
+                        box[2] < px and A[:, -2:].max() > 0.2, box[3] < px and A[-2:, :].max() > 0.2]
+                if not any(grow) or attempt == 2:
+                    break
+                gx, gy = max(4, w // 4), max(4, h // 4)
+                box = (max(0, box[0] - gx * grow[0]), max(0, box[1] - gy * grow[1]),
+                       min(px, box[2] + gx * grow[2]), min(px, box[3] + gy * grow[3]))
+            if (A > 0.15).sum() < 6:
+                continue  # hidden behind something here
+            fname = f'L-{it["key"]}-{n}.webp'
+            png = os.path.join(tmp, f'L-{it["key"]}-{n}.png')
+            save_png(png, layer)
+            webp(png, os.path.join(dest, fname), quality=90, alpha=True)
+            # The item's own coverage (no shadow), same box: lets the viewer re-paint the wall in its shadow.
+            oname = f'L-{it["key"]}-{n}-obj.webp'
+            opng = os.path.join(tmp, f'L-{it["key"]}-{n}-obj.png')
+            # Grown by 1–2 px (max filter) so it fully covers the item's anti-aliased edges.
+            r = 2 if px >= 1024 else 1
+            op = np.pad(obj, r, mode='edge')
+            oh, ow = obj.shape
+            obj = np.max([op[dy:dy + oh, dx:dx + ow] for dy in range(2 * r + 1) for dx in range(2 * r + 1)], axis=0)
+            save_png(opng, np.repeat(obj[..., None], 3, axis=2))
+            webp(opng, os.path.join(dest, oname), quality=90, alpha=False)
+            x0, y0, x1, y1 = box
+            uv = [round(x0 / px, 6), round(1 - y1 / px, 6), round(x1 / px, 6), round(1 - y0 / px, 6)]
+            if n == 'detail':
+                entry['detail'] = {'file': fname, 'obj': oname, 'rect': uv}
+            else:
+                entry['faces'][n] = {'file': fname, 'obj': oname, 'rect': uv}
+        entries.append(entry)
+    show({it['key'] for it in items if it['default']})
+    scene.render.use_border = False
+
+    has_detail = any(v.get('has_empty') for v in views)
+    empty = {'faces': '<face>-empty.webp', 'mask': '<face>-empty-mask.webp', 'facesList': empty_faces, 'hasDetail': has_detail}
+    if 'detail' in meta and o['detail_size'] <= 0:
+        # Layers rendered without the detail (faster): the viewer hides the detail while furniture is changed.
+        empty['detailSkipped'] = True
+    if has_detail:
+        empty.update({'detail': 'detail-empty.webp', 'detailMask': 'detail-empty-mask.webp'})
+    with open(meta_path) as fh:
+        meta = json.load(fh)
+    meta['layers'] = {'empty': empty, 'items': entries}
+    with open(meta_path, 'w') as fh:
+        json.dump(meta, fh, indent=2)
+    print(f'[{key}] layers done in {time.time() - t_start:.0f}s (empty room {t_empty:.0f}s); rendered '
+          f'{area / 1e6:.2f} Mpx = {100 * area / full_area:.0f}% of the full faces + detail ({full_area / 1e6:.2f} Mpx): '
+          + ', '.join(f'{e["key"]}[{",".join(e["faces"])}{",detail" if "detail" in e else ""}]' for e in entries), flush=True)
+
+
+def check_items(key, cfg):
+    """Build the room with its optional furniture and list the items (no rendering)."""
+    cfg['_layers'] = True
+    camera, _ = build(cfg)
+    zone = free_zone(cfg)
+    items = layer_items(cfg)
+    meta_path = os.path.join(ROOT, key, 'meta.json')
+    if os.path.isfile(meta_path):
+        # Pixels --layers would render at the installed sizes (before any box grows), vs the full faces + detail.
+        with open(meta_path) as fh:
+            meta = json.load(fh)
+        size = meta['faceSize']
+        views = [(n, size if n not in ('u', 'd') else int(size * 2 / 3)) for n in FACES]
+        if 'detail' in meta:
+            views.append(('detail', meta['detail']['size']))
+        bpy.context.scene.render.resolution_x = bpy.context.scene.render.resolution_y = size
+        full = area = 0
+        for n, px in views:
+            full += px * px
+            if n == 'detail':
+                aim_detail(camera, *detail_frame(cfg, zone))
+            else:
+                aim_face(camera, n)
+            bpy.context.view_layer.update()
+            pad = max(8, px // 64)
+            bs = []
+            for it in items:
+                rect = project_rect(camera, item_boxes(it['objs']))
+                if rect:
+                    b = rect_pixels(rect, px)
+                    bs.append(b)
+                    area += (min(px, b[2] + pad) - max(0, b[0] - pad)) * (min(px, b[3] + pad) - max(0, b[1] - pad))
+            if bs:
+                u = (min(b[0] for b in bs) - pad, min(b[1] for b in bs) - pad, max(b[2] for b in bs) + pad, max(b[3] for b in bs) + pad)
+                area += (min(px, u[2]) - max(0, u[0])) * (min(px, u[3]) - max(0, u[1]))
+        print(f'[{key}] --layers estimate: {area / 1e6:.1f} Mpx rendered vs {full / 1e6:.1f} Mpx for the full faces + detail '
+              f'({100 * area / full:.0f}%)', flush=True)
+    for it in items:
+        lo, hi = world_bbox(it['objs'])
+        print(f'[{key}] item {it["key"]:<14} {it["label"]:<28} default={it["default"]!s:<5} objects={len(it["objs"]):<4} '
+              f'dist={it["dist"]:.2f} bbox=({lo.x:.2f},{lo.y:.2f},{lo.z:.2f})..({hi.x:.2f},{hi.y:.2f},{hi.z:.2f})', flush=True)
+    meta_path = os.path.join(PUBLIC, key, 'meta.json')
+    if os.path.isfile(meta_path):
+        with open(meta_path) as fh:
+            art = json.load(fh)['artWall']
+        same = all(abs(art[k] - zone[k]) < 1e-3 for k in zone)
+        print(f'[{key}] free zone {zone} {"matches" if same else "DIFFERS FROM"} meta.json', flush=True)
+
+
 def write_index(order):
     """Every room folder with a meta.json (rendered rooms in their order, then the real photographed rooms)."""
     rooms = []
-    for key in sorted(os.listdir(PUBLIC)):
-        meta_path = os.path.join(PUBLIC, key, 'meta.json')
+    for key in sorted(os.listdir(ROOT)):
+        if key.startswith('photo-'):
+            continue  # the photographed rooms were retired (furniture baked in, walls not paintable)
+        meta_path = os.path.join(ROOT, key, 'meta.json')
         if os.path.isfile(meta_path):
             with open(meta_path) as fh:
                 meta = json.load(fh)
             rooms.append({'key': key, 'title': meta['title'], 'kind': meta.get('kind', 'render')})
-    menu = ['living', 'bedroom', 'kitchen', 'office', 'dining', 'lobby',
-            'photo-reading-room', 'photo-seaview-suite', 'photo-sunny-apartment']
+    menu = ['living', 'bedroom', 'kitchen', 'office', 'dining', 'lobby']
     rooms.sort(key=lambda r: (menu.index(r['key']) if r['key'] in menu else 99, r['title']))
-    with open(os.path.join(PUBLIC, 'index.json'), 'w') as fh:
+    with open(os.path.join(ROOT, 'index.json'), 'w') as fh:
         json.dump(rooms, fh, indent=2)
 
 
+ROOT = PUBLIC
+
+
 def main():
+    global ROOT
     o = args()
+    if o.get('out'):
+        ROOT = os.path.abspath(o['out'])
     configs = room_configs()
     keys = list(configs) if o['room'] == 'all' else o['room'].split(',')
     for key in keys:
+        if o.get('check_items'):
+            check_items(key, configs[key])
+            continue
+        if o.get('layers'):
+            render_layers(key, configs[key], o)
+            continue
         if o.get('zone_only'):
             # Re-measure where art can hang (no rendering) and update meta.json.
             build(configs[key])
-            meta_path = os.path.join(PUBLIC, key, 'meta.json')
+            meta_path = os.path.join(ROOT, key, 'meta.json')
             with open(meta_path) as fh:
                 meta = json.load(fh)
             meta['artWall'].update(free_zone(configs[key]))

@@ -23,7 +23,12 @@ class EnquiryLine extends Model implements HasMedia
 {
     use InteractsWithMedia;
 
+    /** Quarter turns the customer can apply to the picture (degrees clockwise). */
+    public const ROTATIONS = [0, 90, 180, 270];
+
     protected $guarded = ['id'];
+
+    protected $attributes = ['image_rotation' => 0];
 
     protected function casts(): array
     {
@@ -38,6 +43,7 @@ class EnquiryLine extends Model implements HasMedia
             'frame_advice_requested' => 'boolean',
             'width_mm' => 'integer',
             'height_mm' => 'integer',
+            'image_rotation' => 'integer',
             'quantity' => 'integer',
             'mat_border_mm' => 'integer',
             'wall_width_mm' => 'integer',
@@ -170,6 +176,37 @@ class EnquiryLine extends Model implements HasMedia
         }
 
         return MediaUrl::for($media, $conversion);
+    }
+
+    /** True when the customer swapped the painting's width and height (stored as a quarter turn). */
+    public function sidesSwapped(): bool
+    {
+        return intdiv((int) $this->image_rotation, 90) % 2 === 1;
+    }
+
+    /** Production note when the sides are swapped: the picture stays upright and is stretched to the swapped size. */
+    public function rotationLabel(): ?string
+    {
+        return $this->sidesSwapped() ? 'Width and height swapped: print the picture upright, stretched to fill' : null;
+    }
+
+    /**
+     * The size as the piece hangs (width and height swapped when the customer chose Rotate), noted as such —
+     * for customer-facing summaries. The stored size stays the painting's own.
+     */
+    public function hungSizeLabel(): string
+    {
+        return $this->sidesSwapped() ? $this->printSizeLabel().' · sides swapped' : $this->sizeLabel();
+    }
+
+    /** The size to make (and hang): width and height swapped when the customer chose Rotate. */
+    public function printSizeLabel(): string
+    {
+        if (! $this->sidesSwapped()) {
+            return $this->sizeLabel();
+        }
+
+        return (clone $this)->forceFill(['width_mm' => $this->height_mm, 'height_mm' => $this->width_mm])->sizeLabel();
     }
 
     /** e.g. "50 × 70 cm". */

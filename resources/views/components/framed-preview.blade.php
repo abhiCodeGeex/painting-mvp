@@ -5,7 +5,7 @@
     <div style="{{ $preview['wallStyle'] }}">
         <span style="{{ $preview['frameStyle'] }}">
             <span style="{{ $preview['matStyle'] }}">
-                <span style="{{ $preview['imageStyle'] }}"></span>
+                <span style="{{ $preview['imageStyle'] }}">@if (! empty($preview['imageInnerStyle']))<span style="{{ $preview['imageInnerStyle'] }}"></span>@endif</span>
             </span>
         </span>
     </div>

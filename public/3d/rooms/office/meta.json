@@ -1,7 +1,7 @@
 {
   "key": "office",
   "title": "Office",
-  "faceSize": 1024,
+  "faceSize": 2048,
   "faces": {
     "f": {
       "dir": [
@@ -105,8 +105,17 @@
   "wallAlbedo": 0.8,
   "knee": 0.8,
   "exposure": [
-    0.7166,
-    1.3054,
-    2.3056
-  ]
+    0.7139,
+    1.2969,
+    2.3069
+  ],
+  "detail": {
+    "file": "detail.webp",
+    "mask": "detail-mask.webp",
+    "size": 4096,
+    "u0": 0.369217,
+    "u1": 0.766667,
+    "v0": 0.354275,
+    "v1": 0.751725
+  }
 }

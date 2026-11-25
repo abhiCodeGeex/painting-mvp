@@ -32,9 +32,16 @@ class FramedPreview
         ?int $frameWidthMm = null,
         FrameFinish|string|null $finish = null,
         int $depthMm = 0,
+        int $rotation = 0,
     ): array {
         $widthMm = max(1, $widthMm);
         $heightMm = max(1, $heightMm);
+
+        // A quarter turn means the hung width and height are swapped.
+        $rotation = ((int) round($rotation / 90) * 90 % 360 + 360) % 360;
+        if ($rotation === 90 || $rotation === 270) {
+            [$widthMm, $heightMm] = [$heightMm, $widthMm];
+        }
 
         $frameColour ??= $frame?->colour_hex;
         $frameWidthMm ??= $frame?->profile_width_mm ?? 0;
@@ -68,12 +75,14 @@ class FramedPreview
             ? sprintf('display:block;padding:%s %s %s %s;background:%s;', $px($matBorderMm, 2), $px($matBorderMm, 2), $px($matBorderMm + $matBottomExtra, 2), $px($matBorderMm, 2), $mat->colour_hex)
             : 'display:block;';
 
+        $background = $imageUrl ? "#ddd url('".e($imageUrl)."')" : self::SAMPLE_IMAGE_GRADIENT;
+        $matCore = $mat ? 'box-shadow:0 0 0 '.$px(2, 1).' '.$mat->core_colour_hex.';' : '';
+
+        // Width and height swapped (a quarter turn): the upright picture is stretched to fill, never turned or cropped.
+        $imageInnerStyle = null;
         $imageStyle = sprintf(
-            'display:block;width:%s;height:%s;background:%s;background-size:cover;background-position:center;%s',
-            $px($widthMm, 4),
-            $px($heightMm, 4),
-            $imageUrl ? "#ddd url('".e($imageUrl)."')" : self::SAMPLE_IMAGE_GRADIENT,
-            $mat ? 'box-shadow:0 0 0 '.$px(2, 1).' '.$mat->core_colour_hex.';' : '',
+            'display:block;width:%s;height:%s;background:%s;background-size:%s;background-position:center;%s',
+            $px($widthMm, 4), $px($heightMm, 4), $background, $rotation === 0 ? 'cover' : '100% 100%', $matCore,
         );
 
         return [
@@ -83,6 +92,8 @@ class FramedPreview
             'frameStyle' => $frameStyle,
             'matStyle' => $matStyle,
             'imageStyle' => $imageStyle,
+            'imageInnerStyle' => $imageInnerStyle,
+            'rotation' => $rotation,
             'hasImage' => (bool) $imageUrl,
         ];
     }
@@ -104,6 +115,7 @@ class FramedPreview
             wallColour: $withWall ? ($line->wall_colour ?: '#EDE8E1') : null,
             maxPx: $maxPx,
             depthMm: $line->frame ? 0 : (int) $line->substrate?->depth_mm,
+            rotation: (int) $line->image_rotation,
         );
     }
 

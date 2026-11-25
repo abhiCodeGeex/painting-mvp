@@ -25,16 +25,27 @@
         <div style="display:flex;flex-wrap:wrap;gap:20px;padding:16px;border:1px solid rgba(128,128,128,.25);border-radius:12px;">
             <div style="flex:0 0 auto;">
                 <x-framed-preview :preview="FramedPreview::forLine($line, 200)" caption="Preview on wall (to scale)" />
+                @if ($fullUrl = $line->previewImageUrl(null))
+                    {{-- The original artwork image, full resolution, in a new tab (zoom in with the browser). --}}
+                    <a href="{{ $fullUrl }}" target="_blank" rel="noopener"
+                       style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid rgba(128,128,128,.35);text-decoration:none;">
+                        &#x2922; View artwork full size
+                    </a>
+                @endif
             </div>
 
             <div style="flex:1 1 320px;min-width:260px;font-size:14px;">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
                     <span style="font-size:12px;padding:2px 8px;border-radius:999px;background:rgba(128,128,128,.15);">#{{ $i + 1 }} · {{ $line->source_type->getLabel() }}</span>
                     <strong style="font-size:16px;">{{ $line->displayTitle() }}</strong>
+                    @if ($line->sidesSwapped())
+                        <span style="font-size:12px;padding:2px 8px;border-radius:999px;background:rgba(245,158,11,.18);color:#b45309;font-weight:600;">Sides swapped</span>
+                    @endif
                 </div>
 
                 {!! $row('Artwork', $line->source_type === LineSource::Catalog ? trim(($line->artwork?->code ?? '').' — '.($line->artwork?->artist?->name ?? 'Unknown artist'), ' —') : null) !!}
-                {!! $row('Size', $line->sizeLabel().' ('.$line->size_reference->getLabel().')') !!}
+                {!! $row('Size', $line->printSizeLabel().' ('.$line->size_reference->getLabel().')') !!}
+                {!! $row('Hanging', $line->rotationLabel()) !!}
                 {!! $row('Quantity', (string) $line->quantity) !!}
                 {!! $row('Quality', $line->qualityTier?->name) !!}
                 {!! $row('Medium', $line->medium?->name) !!}
