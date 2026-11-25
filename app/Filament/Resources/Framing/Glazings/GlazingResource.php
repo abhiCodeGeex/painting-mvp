@@ -9,6 +9,7 @@ use App\Filament\Support\MasterForm;
 use App\Filament\Support\MasterResource;
 use App\Filament\Support\MasterTable;
 use App\Filament\Support\MoneyInput;
+use App\Filament\Support\StockColumns;
 use App\Models\Glazing;
 use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
@@ -76,16 +77,16 @@ class GlazingResource extends MasterResource
 
     public static function table(Table $table): Table
     {
-        return MasterTable::configure($table, [
+        return StockColumns::apply(MasterTable::configure($table, [
             TextColumn::make('name')->searchable(),
             TextColumn::make('material')->badge(),
             TextColumn::make('reflection_level')->label('Reflection'),
             MasterTable::money('cost_per_m2', 'Cost / m²'),
             TextColumn::make('max_area_m2')->label('Max area')->suffix(' m²')->placeholder('—')->alignEnd(),
-            MasterTable::stock(),
+            ...StockColumns::columns(),
         ], [
             SelectFilter::make('material')->options(GlazingMaterial::class),
-        ])->modifyQueryUsing(fn ($query) => $query->with('stockItem'));
+        ]));
     }
 
     public static function getPages(): array

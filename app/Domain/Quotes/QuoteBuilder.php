@@ -89,20 +89,24 @@ class QuoteBuilder
     }
 
     /**
-     * Pricing engine figures for one enquiry line, optionally at a chosen complexity.
+     * Pricing engine figures for one enquiry line, with the artist chosen for a new creation and the
+     * labour and the work after the artwork entered on the quote.
+     * Calculated unit price = engine price + labour + work, all per piece (no markup).
      *
      * @return array<string, mixed>
      */
-    public function linePrice(EnquiryLine $line, Enquiry $enquiry, ?int $complexityLevelId = null): array
+    public function linePrice(EnquiryLine $line, Enquiry $enquiry, ?int $artistId = null, int $labourAmount = 0, int $workTotal = 0): array
     {
-        $r = $this->engine->price(LineConfig::fromLine($line, $complexityLevelId), $enquiry->required_by);
+        $r = $this->engine->price(LineConfig::fromLine($line, $artistId), $enquiry->required_by);
+        $calculated = $r['unit_price'] + max(0, $labourAmount) + max(0, $workTotal);
 
         return [
             'quantity' => $r['quantity'],
             'unit_cost' => $r['unit_cost'],
-            'calculated_unit_price' => $r['unit_price'],
-            'unit_price' => $r['unit_price'],
-            'complexity_level_id' => $complexityLevelId,
+            'calculated_unit_price' => $calculated,
+            'unit_price' => $calculated,
+            'artist_id' => $artistId,
+            'labour_amount' => max(0, $labourAmount),
             'breakdown' => $r,
         ];
     }
@@ -313,7 +317,8 @@ class QuoteBuilder
             $line->rotationLabel(),
             $line->medium?->name,
             $line->substrate?->name,
-            $line->frame ? "Frame: {$line->frame->name}" : ($line->frame_advice_requested ? 'Frame: to be advised' : 'No frame'),
+            // e.g. "Frame: Blue ribbed 20 mm + Gold 30 mm around · Frame 1 split: top half / bottom half Walnut"
+            $line->frame ? 'Frame: '.$line->frameLayersLabel() : ($line->frame_advice_requested ? 'Frame: to be advised' : 'No frame'),
             $line->mat ? "Mat: {$line->mat->name}" : null,
             $line->glazing?->name,
         ];

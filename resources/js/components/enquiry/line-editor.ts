@@ -1,6 +1,6 @@
 import { InertiaForm } from '@/inertia/form';
 import { fits, mmToUnit, unitToMm } from '@/lib/units';
-import type { CatalogArtwork, CatalogOptions, EnquiryLine } from '@/types/portal';
+import type { CatalogArtwork, CatalogOptions, EnquiryLine, FrameLayerInput, FrameSplitMode } from '@/types/portal';
 import { UiCheckbox } from '@/ui/checkbox';
 import { UiDialog } from '@/ui/dialog';
 import { Icon } from '@/ui/icon';
@@ -21,10 +21,9 @@ import {
     viewChild,
 } from '@angular/core';
 import { ArrowLeft, ArrowRight, Brush, Check, Frame as FrameIcon, Images, LoaderCircle, TriangleAlert } from 'lucide';
-import { CatalogPicker, ChoiceRow, FileGallery, PaletteInput, SizeFields } from './editor-parts';
-import { FramedArt } from './framed-art';
+import { CatalogPicker, ChoiceRow, FileGallery, FrameTiles, PaletteInput, SizeFields } from './editor-parts';
 import { initialLineForm, type LineForm } from './line-form';
-import { previewParts } from './preview-helpers';
+import { framesWidth, previewParts } from './preview-helpers';
 import { liveEstimate, PriceEstimateBox } from './price-estimate';
 import { WallPreview } from './wall-preview';
 
@@ -58,7 +57,7 @@ function stepOfField(key: string): number {
     const k = key.split('.')[0];
     if (['width_mm', 'height_mm', 'quantity', 'unit', 'size_reference', 'image_rotation'].includes(k)) return 2;
     if (['quality_tier_id', 'medium_id', 'substrate_id', 'edge_style'].includes(k)) return 3;
-    if (['frame_id', 'frame_advice_requested', 'mat_id', 'mat_border_mm', 'glazing_id', 'finishing_ids'].includes(k)) return 4;
+    if (['frame_id', 'frame_layers', 'frame_advice_requested', 'mat_id', 'mat_border_mm', 'glazing_id', 'finishing_ids'].includes(k)) return 4;
     if (['placement', 'wall_width_mm', 'wall_height_mm', 'wall_colour', 'notes'].includes(k)) return 5;
     return 1;
 }
@@ -79,7 +78,7 @@ function stepOfField(key: string): number {
         CatalogPicker,
         PaletteInput,
         SizeFields,
-        FramedArt,
+        FrameTiles,
         WallPreview,
         PriceEstimateBox,
     ],
@@ -393,8 +392,12 @@ function stepOfField(key: string): number {
                             @if (step() === 4) {
                                 <section class="space-y-4">
                                     <h3 class="text-base font-semibold">Frame</h3>
+                                    <p class="text-muted-foreground -mt-1 text-xs">
+                                        Want more than one frame? Pick a frame, then scroll down: <strong>Split this frame</strong> uses two mouldings
+                                        (top &amp; bottom / sides, or top half / bottom half), and <strong>+ Add a frame around</strong> stacks up to 3.
+                                    </p>
                                     <div class="grid gap-1.5">
-                                        <div class="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                                        <frame-tiles [frames]="frames()" [selected]="d().frame_id" (picked)="setFrame($event, false)">
                                             <button
                                                 type="button"
                                                 [class]="tile(!d().frame_id && !d().frame_advice_requested)"
@@ -418,33 +421,64 @@ function stepOfField(key: string): number {
                                                 >
                                                 <span class="text-xs leading-tight font-medium">Advise me</span>
                                             </button>
-                                            @for (f of frames(); track f.id) {
-                                                <button type="button" [class]="tile(d().frame_id === f.id)" (click)="setFrame(f.id, false)">
-                                                    <span class="flex h-11 items-center justify-center">
-                                                        <framed-art
-                                                            [imageUrl]="null"
-                                                            [widthMm]="300"
-                                                            [heightMm]="400"
-                                                            [frame]="{
-                                                                colour: f.colour,
-                                                                width_mm: f.width_mm,
-                                                                finish: f.finish,
-                                                                strip_url: f.strip_url ?? null,
-                                                                strip_face_mm: f.strip_face_mm ?? null,
-                                                            }"
-                                                            [mat]="null"
-                                                            [scale]="40 / (400 + 2 * f.width_mm)"
+                                        </frame-tiles>
+                                        <input-error [message]="form.error('frame_id')" />
+                                        <input-error [message]="layerError()" />
+                                    </div>
+
+                                    @if (d().frame_id) {
+                                        <!-- More frames: split a frame between two mouldings, or add a frame around it (up to 3). -->
+                                        <div class="space-y-3">
+                                            @for (layer of d().frame_layers; track $index; let i = $index) {
+                                                <div class="space-y-2.5 rounded-lg border p-3">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <span class="text-sm font-medium">{{ layerTitle(i) }}</span>
+                                                        @if (i > 0) {
+                                                            <button
+                                                                type="button"
+                                                                class="text-muted-foreground hover:text-foreground rounded-md px-2 text-lg leading-none"
+                                                                [attr.aria-label]="'Remove ' + layerTitle(i)"
+                                                                (click)="removeLayer(i)"
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        }
+                                                    </div>
+                                                    @if (i > 0) {
+                                                        <frame-tiles [frames]="frames()" [selected]="layer.frame_id" (picked)="setLayerFrame(i, $event)" />
+                                                    } @else {
+                                                        <p class="text-muted-foreground text-xs">{{ frameName(layer.frame_id) }}, chosen above.</p>
+                                                    }
+                                                    <label class="flex items-center gap-2 text-sm">
+                                                        <input
+                                                            type="checkbox"
+                                                            class="accent-primary size-4"
+                                                            [checked]="!!layer.split"
+                                                            (change)="toggleSplit(i, $any($event.target).checked)"
                                                         />
-                                                    </span>
-                                                    <span class="text-xs leading-tight font-medium">{{ f.name }}</span>
-                                                    <span class="text-muted-foreground -mt-1 text-[11px]"
-                                                        >{{ f.width_mm }} mm · {{ f.material }}</span
-                                                    >
-                                                </button>
+                                                        Split this frame (two mouldings)
+                                                    </label>
+                                                    @if (layer.split) {
+                                                        <div class="grid grid-cols-2 gap-2">
+                                                            @for (m of splitModes; track m.value) {
+                                                                <button type="button" [class]="tile(layer.split.mode === m.value)" (click)="setSplitMode(i, m.value)">
+                                                                    <span class="text-xs leading-tight font-medium">{{ m.label }}</span>
+                                                                    <span class="text-muted-foreground text-[11px]">{{ m.hint }}</span>
+                                                                </button>
+                                                            }
+                                                        </div>
+                                                        <p class="text-muted-foreground text-xs">
+                                                            {{ layer.split.mode === 'halves' ? 'Bottom half' : 'Left & right sides' }} in:
+                                                        </p>
+                                                        <frame-tiles [frames]="frames()" [selected]="layer.split.frame_id" (picked)="setSplitFrame(i, $event)" />
+                                                    }
+                                                </div>
+                                            }
+                                            @if (d().frame_layers.length < maxLayers) {
+                                                <button ui-button type="button" variant="outline" size="sm" (click)="addLayer()">+ Add a frame around</button>
                                             }
                                         </div>
-                                        <input-error [message]="form.error('frame_id')" />
-                                    </div>
+                                    }
 
                                     @if (unframed()) {
                                         <p class="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs">
@@ -650,6 +684,7 @@ function stepOfField(key: string): number {
                                 [widthMm]="pictureW()"
                                 [heightMm]="pictureH()"
                                 [frame]="parts().frame"
+                                [layers]="parts().layers"
                                 [mat]="d().mat_id && matsAllowed() ? parts().mat : null"
                                 [depthMm]="parts().depthMm"
                                 [edgeStyle]="d().edge_style"
@@ -872,7 +907,7 @@ export class LineEditor {
                   : d.title || (hasPhoto ? 'My artwork (photo added)' : '');
         const turned = d.source_type === 'catalog' && ((d.image_rotation ?? 0) / 90) % 2 === 1 ? ' · sides swapped' : '';
         const name = (list: { id: number; name: string }[], id: number | null, fallback: string) => list.find((x) => x.id === id)?.name ?? fallback;
-        const frame = d.frame_id ? name(o.frames, d.frame_id, 'Frame') : d.frame_advice_requested ? 'Advise me' : 'No frame';
+        const frame = d.frame_id ? this.layersSummary() : d.frame_advice_requested ? 'Advise me' : 'No frame';
         const extras = this.unframed() ? '' : [d.mat_id && this.matsAllowed() ? 'Mat ' + this.matSummary() : '', this.glazingSummary()].filter(Boolean).join(' · ');
         const steps = this.steps();
         return [
@@ -936,7 +971,7 @@ export class LineEditor {
     protected parts = computed(() => previewParts(this.options(), this.d()));
     // With "outer size", the picture is what's left inside the mat and frame.
     private surround = computed(
-        () => 2 * ((this.parts().frame?.width_mm ?? 0) + (this.d().mat_id && this.matsAllowed() ? (this.parts().mat?.border_mm ?? 0) : 0)),
+        () => 2 * (framesWidth(this.parts().frame, this.parts().layers) + (this.d().mat_id && this.matsAllowed() ? (this.parts().mat?.border_mm ?? 0) : 0)),
     );
     protected pictureW = computed(() =>
         this.d().size_reference === 'outer' ? Math.max(50, this.d().width_mm - this.surround()) : this.d().width_mm,
@@ -962,6 +997,7 @@ export class LineEditor {
                 medium_id: d.medium_id,
                 substrate_id: d.substrate_id,
                 frame_id: d.frame_id,
+                frame_layers: d.frame_id ? d.frame_layers : [],
                 frame_advice_requested: d.frame_advice_requested,
                 mat_id: this.matsAllowed() ? d.mat_id : null,
                 mat_border_mm: d.mat_id ? d.mat_border_mm : null,
@@ -1090,11 +1126,92 @@ export class LineEditor {
         this.form.update((d) => ({
             ...d,
             frame_id: id,
+            // The picker above is the inner frame: frames around it (and its split) stay; no frame / advice clears them all.
+            frame_layers: id ? [{ frame_id: id, split: d.frame_layers[0]?.split ?? null }, ...d.frame_layers.slice(1)] : [],
             frame_advice_requested: advice,
             // Without a frame there is no glass or mat; picking a frame again brings the tier's glass back.
             mat_id: unframed ? null : d.mat_id,
             glazing_id: unframed ? noGlass : d.glazing_id === noGlass && tierGlass ? tierGlass : d.glazing_id,
         }));
+    }
+
+    // ---- several frames: stacked layers (innermost first), each optionally split ----
+    protected readonly maxLayers = 3;
+    protected readonly splitModes: { value: FrameSplitMode; label: string; hint: string }[] = [
+        { value: 'top_bottom_sides', label: 'Top & bottom / sides', hint: 'One moulding on top and bottom, another on the sides' },
+        { value: 'halves', label: 'Top half / bottom half', hint: 'One moulding on the top half, another on the bottom half' },
+    ];
+
+    protected layerTitle(i: number): string {
+        return i === 0 ? 'Frame 1 (inner)' : `Frame ${i + 1} (around frame ${i})`;
+    }
+
+    protected frameName(id: number | null): string {
+        return this.options().frames.find((f) => f.id === id)?.name ?? 'Frame';
+    }
+
+    /** e.g. "Blue ribbed + Gold around · Frame 1 split: top half / bottom half Walnut". */
+    protected layersSummary = computed(() => {
+        const d = this.d();
+        const layers: FrameLayerInput[] = d.frame_layers.length ? d.frame_layers : d.frame_id ? [{ frame_id: d.frame_id, split: null }] : [];
+        const main = layers.map((l, i) => this.frameName(l.frame_id) + (i > 0 ? ' around' : '')).join(' + ');
+        const splits = layers.flatMap((l, i) =>
+            l.split
+                ? [`Frame ${i + 1} split: ${l.split.mode === 'halves' ? 'top half / bottom half' : 'top & bottom / sides'} ${this.frameName(l.split.frame_id)}`]
+                : [],
+        );
+        return [main, ...splits].join(' · ');
+    });
+
+    /** A server error on any layer (e.g. "frame_layers.1.frame_id"). */
+    protected layerError = computed(() => {
+        const errors = this.form.errors() as Record<string, string | undefined>;
+        const key = Object.keys(errors).find((k) => k.startsWith('frame_layers'));
+        return key ? errors[key] : undefined;
+    });
+
+    /** Changes the layers, keeping frame_id = the inner layer's frame. */
+    private setLayers(fn: (layers: FrameLayerInput[]) => FrameLayerInput[]): void {
+        this.form.update((d) => {
+            const layers = fn(d.frame_layers.map((l) => ({ ...l, split: l.split ? { ...l.split } : null }))).slice(0, this.maxLayers);
+            return { ...d, frame_layers: layers, frame_id: layers[0]?.frame_id ?? null };
+        });
+    }
+
+    addLayer(): void {
+        const d = this.d();
+        if (!d.frame_id) return;
+        // A line saved before layers existed has only frame_id: that is layer 1.
+        const base: FrameLayerInput[] = d.frame_layers.length ? d.frame_layers : [{ frame_id: d.frame_id, split: null }];
+        if (base.length >= this.maxLayers) return;
+        // Starts with the same moulding as the frame inside it; the customer picks another.
+        this.setLayers(() => [...base, { frame_id: base[base.length - 1].frame_id, split: null }]);
+    }
+
+    removeLayer(i: number): void {
+        if (i > 0) this.setLayers((layers) => layers.filter((_, j) => j !== i));
+    }
+
+    setLayerFrame(i: number, id: number): void {
+        this.setLayers((layers) => layers.map((l, j) => (j === i ? { ...l, frame_id: id } : l)));
+    }
+
+    toggleSplit(i: number, on: boolean): void {
+        // Start the second moulding on a different frame than the first, so the split is visible at once.
+        const other = (id: number) => this.frames().find((f) => f.id !== id)?.id ?? id;
+        this.setLayers((layers) =>
+            layers.map((l, j) =>
+                j === i ? { ...l, split: on ? { frame_id: other(l.frame_id), mode: 'top_bottom_sides' as FrameSplitMode } : null } : l,
+            ),
+        );
+    }
+
+    setSplitMode(i: number, mode: FrameSplitMode): void {
+        this.setLayers((layers) => layers.map((l, j) => (j === i && l.split ? { ...l, split: { ...l.split, mode } } : l)));
+    }
+
+    setSplitFrame(i: number, id: number): void {
+        this.setLayers((layers) => layers.map((l, j) => (j === i && l.split ? { ...l, split: { ...l.split, frame_id: id } } : l)));
     }
 
     setMatBorder(value: string): void {
@@ -1126,6 +1243,8 @@ export class LineEditor {
             image_rotation: d.source_type === 'catalog' ? d.image_rotation : 0,
             mat_id: matsAllowed ? d.mat_id : null,
             frame_advice_requested: d.frame_id ? false : d.frame_advice_requested,
+            // Multipart form: the layers go as JSON text (the server decodes it). Empty without a frame.
+            frame_layers: d.frame_id && d.frame_layers.length ? JSON.stringify(d.frame_layers) : '',
             // An edge style only for a surface that offers it.
             edge_style: edgeValues.includes(d.edge_style ?? '') ? d.edge_style : null,
         }));

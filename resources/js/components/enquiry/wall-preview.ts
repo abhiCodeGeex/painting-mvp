@@ -25,6 +25,7 @@ import {
     WALL_COLOURS,
     type GlazingLook,
     type PreviewFrame,
+    type PreviewLayer,
     type PreviewMat,
     type WallPiece,
 } from './preview-helpers';
@@ -114,6 +115,7 @@ function supportsWebGL(): boolean {
                         [widthMm]="w()"
                         [heightMm]="h()"
                         [frame]="frame()"
+                        [layers]="layers()"
                         [mat]="mat()"
                         [depthMm]="depthMm()"
                         [rotation]="rotation()"
@@ -183,6 +185,7 @@ function supportsWebGL(): boolean {
                                 [widthMm]="w()"
                                 [heightMm]="h()"
                                 [frame]="frame()"
+                                [layers]="layers()"
                                 [mat]="mat()"
                                 [depthMm]="depthMm()"
                                 [rotation]="rotation()"
@@ -200,6 +203,7 @@ function supportsWebGL(): boolean {
                             [widthMm]="w()"
                             [heightMm]="h()"
                             [frame]="frame()"
+                            [layers]="layers()"
                             [mat]="mat()"
                             [depthMm]="depthMm()"
                             [rotation]="rotation()"
@@ -254,6 +258,7 @@ function supportsWebGL(): boolean {
             [widthMm]="w()"
             [heightMm]="h()"
             [frame]="frame()"
+            [layers]="layers()"
             [mat]="mat()"
             [depthMm]="depthMm()"
             [rotation]="rotation()"
@@ -272,6 +277,8 @@ export class WallPreview {
     readonly widthMm = input.required<number>();
     readonly heightMm = input.required<number>();
     readonly frame = input<PreviewFrame | null>(null);
+    /** Stacked / split frames, innermost first (optional; layers[0] is `frame`). */
+    readonly layers = input<PreviewLayer[] | null>(null);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
     readonly edgeStyle = input<string | null>(null);
@@ -323,6 +330,7 @@ export class WallPreview {
             widthMm: this.w(),
             heightMm: this.h(),
             frame: this.frame(),
+            layers: this.layers() ?? undefined,
             mat: this.mat(),
             depthMm: this.depthMm(),
             edgeStyle: this.edgeStyle(),
@@ -330,7 +338,7 @@ export class WallPreview {
             rotation: this.rotation(),
         },
     ]);
-    private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat()));
+    private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat(), this.layers()));
     protected finishedLabel = computed(() => sizeLabel(this.outer().width, this.outer().height, this.unit()));
 
     /** The customer's wall (when they typed its width): drawn as a dashed outline with the piece on it. */

@@ -5,6 +5,7 @@ use App\Enums\FrameMaterial;
 use App\Enums\Role;
 use App\Filament\Pages\ManagePricingRules;
 use App\Filament\Resources\Catalog\Artists\ArtistResource;
+use App\Filament\Resources\Catalog\Artists\Pages\ManageArtists;
 use App\Filament\Resources\Catalog\Artworks\ArtworkResource;
 use App\Filament\Resources\Catalog\Categories\CategoryResource;
 use App\Filament\Resources\Catalog\Mediums\MediumResource;
@@ -23,6 +24,7 @@ use App\Filament\Resources\Pricing\ComplexityLevels\ComplexityLevelResource;
 use App\Filament\Resources\Pricing\ExtraCharges\ExtraChargeResource;
 use App\Filament\Resources\Pricing\Taxes\Pages\ManageTaxes;
 use App\Filament\Resources\Pricing\Taxes\TaxResource;
+use App\Models\Artist;
 use App\Models\Frame;
 use App\Models\Medium;
 use App\Models\Tax;
@@ -112,8 +114,11 @@ test('pricing rules can be saved', function () {
     $this->actingAs(staffWithRole(Role::SuperAdmin));
 
     Livewire::test(ManagePricingRules::class)
+        ->assertFormFieldDoesNotExist('labour_fixed_per_piece')
+        ->assertFormFieldDoesNotExist('labour_per_perimeter_m')
+        ->assertFormFieldDoesNotExist('commission_price_per_m2')
+        ->assertDontSee('Framing labour')
         ->fillForm([
-            'labour_fixed_per_piece' => '350',
             'default_markup_percent' => '45',
             'quantity_breaks' => [
                 ['min_qty' => '20', 'discount_percent' => '7.5'],
@@ -125,8 +130,7 @@ test('pricing rules can be saved', function () {
 
     $settings = app(PricingSettings::class)->refresh();
 
-    expect($settings->labour_fixed_per_piece)->toBe(35000)
-        ->and($settings->default_markup_percent)->toBe(45.0)
+    expect($settings->default_markup_percent)->toBe(45.0)
         // Stored as JSON, so 3.0 comes back as 3: compare loosely.
         ->and($settings->quantity_breaks)->toEqual([
             ['min_qty' => 5, 'discount_percent' => 3.0],
@@ -196,4 +200,19 @@ test('master data seeders can run twice without duplicating rows', function () {
     $this->seed([StateSeeder::class, MasterDataSeeder::class]);
 
     expect([Frame::count(), Medium::count(), Tax::count()])->toBe($before);
+});
+
+test('an artist has a fee per m², typed in rupees and stored in paise', function () {
+    $this->actingAs(staffWithRole(Role::SuperAdmin));
+
+    Livewire::test(ManageArtists::class)
+        ->assertSee('Fee per m²')
+        ->callAction(CreateAction::class, data: ['name' => 'Meera Rao', 'country' => 'IN', 'fee_per_m2' => '55000', 'is_active' => true])
+        ->assertHasNoActionErrors();
+
+    expect(Artist::where('name', 'Meera Rao')->value('fee_per_m2'))->toBe(5_500_000);
+});
+
+test('complexity levels are no longer in the navigation', function () {
+    expect(ComplexityLevelResource::shouldRegisterNavigation())->toBeFalse();
 });

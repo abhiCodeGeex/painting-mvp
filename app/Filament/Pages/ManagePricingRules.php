@@ -4,7 +4,6 @@ namespace App\Filament\Pages;
 
 use App\Enums\Rounding;
 use App\Filament\Support\MasterForm;
-use App\Filament\Support\MoneyInput;
 use App\Providers\Filament\AdminPanelProvider;
 use App\Settings\PricingSettings;
 use BackedEnum;
@@ -42,12 +41,10 @@ class ManagePricingRules extends SettingsPage
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make('Labour & margin')
-                ->description('Added to every framed piece before markup.')
+            Section::make('Margin')
+                ->description('Material costs are marked up to get the selling price. Artist fees are set on each artist; labour is entered on each quote line.')
                 ->columns(3)
                 ->schema([
-                    MoneyInput::make('labour_fixed_per_piece')->label('Labour per piece')->required(),
-                    MoneyInput::make('labour_per_perimeter_m')->label('Labour per metre of perimeter')->required(),
                     MasterForm::percent('default_markup_percent', 'Default markup')->maxValue(1000)->required()
                         ->helperText('Cost × (1 + markup) = selling price.'),
                 ]),
@@ -106,7 +103,7 @@ class ManagePricingRules extends SettingsPage
             $data[$key] = (float) $data[$key];
         }
 
-        foreach (['labour_fixed_per_piece', 'labour_per_perimeter_m', 'rush_threshold_days', 'mat_overlap_mm', 'rebate_allowance_mm'] as $key) {
+        foreach (['rush_threshold_days', 'mat_overlap_mm', 'rebate_allowance_mm'] as $key) {
             $data[$key] = (int) $data[$key];
         }
 

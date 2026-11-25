@@ -1,6 +1,6 @@
 import type { InertiaForm } from '@/inertia/form';
 import { mmToUnit, sizeLabel, unitToMm, type Unit } from '@/lib/units';
-import type { CatalogArtwork, CatalogOptions, MediaFile, Option } from '@/types/portal';
+import type { CatalogArtwork, CatalogFrame, CatalogOptions, MediaFile, Option } from '@/types/portal';
 import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import {
@@ -18,6 +18,7 @@ import {
 } from '@angular/core';
 import { Check, ImagePlus, Maximize2, Search, Upload, X } from 'lucide';
 import { ArtworkLightbox } from './artwork-lightbox';
+import { FramedArt } from './framed-art';
 import type { LineForm } from './line-form';
 
 /* ------------------------------------------------------------------ */
@@ -46,6 +47,55 @@ export class ChoiceRow {
     readonly value = input<string | null>(null);
     readonly options = input.required<Option[]>();
     readonly changed = output<string>();
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * The frame picker: one tile per moulding (a small framed sample, name, width, material). Used for the
+ * inner frame (with "No frame" / "Advise me" tiles projected in front), each frame added around it and
+ * the second moulding of a split frame.
+ */
+@Component({
+    selector: 'frame-tiles',
+    imports: [FramedArt],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    template: `
+        <div class="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            <ng-content />
+            @for (f of frames(); track f.id) {
+                <button type="button" [class]="tile(selected() === f.id)" [attr.aria-pressed]="selected() === f.id" (click)="picked.emit(f.id)">
+                    <span class="flex h-11 items-center justify-center">
+                        <framed-art
+                            [imageUrl]="null"
+                            [widthMm]="300"
+                            [heightMm]="400"
+                            [frame]="{
+                                colour: f.colour,
+                                width_mm: f.width_mm,
+                                finish: f.finish,
+                                strip_url: f.strip_url ?? null,
+                                strip_face_mm: f.strip_face_mm ?? null,
+                            }"
+                            [mat]="null"
+                            [scale]="40 / (400 + 2 * f.width_mm)"
+                        />
+                    </span>
+                    <span class="text-xs leading-tight font-medium">{{ f.name }}</span>
+                    <span class="text-muted-foreground -mt-1 text-[11px]">{{ f.width_mm }} mm · {{ f.material }}</span>
+                </button>
+            }
+        </div>
+    `,
+})
+export class FrameTiles {
+    readonly frames = input.required<CatalogFrame[]>();
+    readonly selected = input<number | null>(null);
+    readonly picked = output<number>();
+
+    protected tile(active: boolean): string {
+        return 'flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-center transition ' + (active ? 'border-primary ring-primary ring-2' : 'hover:bg-muted');
+    }
 }
 
 /* ------------------------------------------------------------------ */

@@ -17,6 +17,7 @@ import { LineEstimateTag } from './price-estimate';
                     [widthMm]="hung().width_mm"
                     [heightMm]="hung().height_mm"
                     [frame]="parts().frame"
+                    [layers]="parts().layers"
                     [mat]="parts().mat"
                     [depthMm]="parts().depthMm"
                     [rotation]="line().image_rotation ?? 0"
@@ -48,7 +49,7 @@ export class LineCard {
     protected parts = computed(() => previewParts(this.options(), this.line()));
     protected hung = computed(() => hungSize(this.line()));
     protected scale = computed(() => {
-        const outer = outerSize(this.hung().width_mm, this.hung().height_mm, this.parts().frame, this.parts().mat);
+        const outer = outerSize(this.hung().width_mm, this.hung().height_mm, this.parts().frame, this.parts().mat, this.parts().layers);
         return 110 / Math.max(outer.width, outer.height);
     });
     protected details = computed(() => {

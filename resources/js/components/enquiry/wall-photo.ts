@@ -5,7 +5,7 @@ import { UiButton, UiInput } from '@/ui/primitives';
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, input, signal, viewChild } from '@angular/core';
 import { Camera, Eye, EyeOff, RotateCcw, Upload } from 'lucide';
 import { FramedArt } from './framed-art';
-import { outerSize, stageClass, type PreviewFrame, type PreviewMat } from './preview-helpers';
+import { outerSize, stageClass, type PreviewFrame, type PreviewLayer, type PreviewMat } from './preview-helpers';
 
 type Pt = [number, number];
 /** 3×3 homography, row-major [a,b,c, d,e,f, g,h,i]. */
@@ -114,6 +114,7 @@ const DEFAULT_CORNERS: Pt[] = [
                                 [widthMm]="widthMm()"
                                 [heightMm]="heightMm()"
                                 [frame]="frame()"
+                                [layers]="layers()"
                                 [mat]="mat()"
                                 [depthMm]="depthMm()"
                                 [rotation]="rotation()"
@@ -190,6 +191,8 @@ export class WallPhoto {
     readonly widthMm = input.required<number>();
     readonly heightMm = input.required<number>();
     readonly frame = input<PreviewFrame | null>(null);
+    /** Stacked / split frames, innermost first (optional; layers[0] is `frame`). */
+    readonly layers = input<PreviewLayer[] | null>(null);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
     /** Picture turned clockwise (0/90/180/270°); widthMm/heightMm are already the turned piece's size. */
@@ -223,7 +226,7 @@ export class WallPhoto {
     private size = signal<{ w: number; h: number }>({ w: 0, h: 0 });
     private stage = viewChild<ElementRef<HTMLDivElement>>('stage');
 
-    private outer = computed(() => outerSize(this.widthMm(), this.heightMm(), this.frame(), this.mat()));
+    private outer = computed(() => outerSize(this.widthMm(), this.heightMm(), this.frame(), this.mat(), this.layers()));
     protected refWText = computed(() => mmToUnit(this.refW(), this.unit()));
     protected refHText = computed(() => mmToUnit(this.refH(), this.unit()));
     protected screenCorners = computed<Pt[]>(() => this.corners().map(([x, y]) => [x * this.size().w, y * this.size().h]));

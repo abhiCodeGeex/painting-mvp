@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Portal;
 
+use App\Domain\Pricing\FrameLayers;
 use App\Enums\LineSource;
 use App\Enums\OwnArtworkService;
 use App\Http\Requests\Portal\EnquiryLineRequest;
 use App\Models\Enquiry;
 use App\Models\EnquiryLine;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -44,9 +46,9 @@ class EnquiryLineController extends PortalController
         return back()->with('success', 'Artwork updated.');
     }
 
-    public function duplicate(Enquiry $enquiry, EnquiryLine $line): RedirectResponse
+    public function duplicate(Request $request, Enquiry $enquiry, EnquiryLine $line): RedirectResponse
     {
-        $this->authorize('update', $enquiry);
+        $this->authorizeEditor($request, $enquiry);
         abort_unless($line->enquiry_id === $enquiry->id, 404);
 
         DB::transaction(function () use ($enquiry, $line): void {
@@ -64,9 +66,9 @@ class EnquiryLineController extends PortalController
         return back()->with('success', 'Artwork duplicated.');
     }
 
-    public function destroy(Enquiry $enquiry, EnquiryLine $line): RedirectResponse
+    public function destroy(Request $request, Enquiry $enquiry, EnquiryLine $line): RedirectResponse
     {
-        $this->authorize('update', $enquiry);
+        $this->authorizeEditor($request, $enquiry);
         abort_unless($line->enquiry_id === $enquiry->id, 404);
 
         $line->delete();
@@ -108,7 +110,9 @@ class EnquiryLineController extends PortalController
             'medium_id' => $data['medium_id'] ?? null,
             'substrate_id' => $data['substrate_id'] ?? null,
             'edge_style' => $data['edge_style'] ?? null,
-            'frame_id' => $data['frame_id'] ?? null,
+            // frame_id stays the inner layer's frame (stock, filters and previews read it).
+            'frame_id' => ($layers = FrameLayers::normalise($data['frame_layers'] ?? null, $data['frame_id'] ?? null))[0]['frame_id'] ?? null,
+            'frame_layers' => $layers ?: null,
             'frame_advice_requested' => (bool) ($data['frame_advice_requested'] ?? false),
             'mat_id' => $data['mat_id'] ?? null,
             'mat_border_mm' => ! empty($data['mat_id']) ? ($data['mat_border_mm'] ?? null) : null,

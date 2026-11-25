@@ -7,6 +7,7 @@ use App\Filament\Support\MasterForm;
 use App\Filament\Support\MasterResource;
 use App\Filament\Support\MasterTable;
 use App\Filament\Support\MoneyInput;
+use App\Filament\Support\StockColumns;
 use App\Models\Mat;
 use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
@@ -77,15 +78,15 @@ class MatResource extends MasterResource
 
     public static function table(Table $table): Table
     {
-        return MasterTable::configure($table, [
+        return StockColumns::apply(MasterTable::configure($table, [
             ViewColumn::make('preview')->label('Preview')->view('filament.columns.mat-preview'),
             TextColumn::make('code')->searchable()->sortable(),
             TextColumn::make('name')->searchable(),
             TextColumn::make('thickness_mm')->label('Thickness')->suffix(' mm')->alignEnd(),
             MasterTable::mm('default_border_mm', 'Border'),
             MasterTable::money('cost_per_m2', 'Cost / m²'),
-            MasterTable::stock(),
-        ])->modifyQueryUsing(fn ($query) => $query->with('stockItem'));
+            ...StockColumns::columns(),
+        ]));
     }
 
     public static function getPages(): array

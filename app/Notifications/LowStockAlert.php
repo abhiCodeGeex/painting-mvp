@@ -4,7 +4,7 @@ namespace App\Notifications;
 
 use App\Enums\Role;
 use App\Enums\StockStatus;
-use App\Filament\Resources\Inventory\StockItems\StockItemResource;
+use App\Filament\Support\StockColumns;
 use App\Models\StockItem;
 use App\Models\User;
 use Filament\Actions\Action;
@@ -31,6 +31,11 @@ class LowStockAlert extends Notification implements ShouldQueue
 
     public string $threshold;
 
+    /**
+     * The item's own list (frames, mats…), filtered to it.
+     */
+    public ?string $listingUrl = null;
+
     public function __construct(StockItem $item, public StockStatus $status)
     {
         // Snapshot the numbers at the moment it crossed, so the message stays true.
@@ -39,6 +44,7 @@ class LowStockAlert extends Notification implements ShouldQueue
         $this->itemType = $item->typeLabel();
         $this->quantity = $item->formattedQuantity();
         $this->threshold = StockItem::formatQuantity($item->low_stock_threshold, $item->unit);
+        $this->listingUrl = StockColumns::listingUrl($item, $status->value);
 
         // Stock changes run in a transaction: only alert once the change is really saved.
         $this->afterCommit();
@@ -68,7 +74,7 @@ class LowStockAlert extends Notification implements ShouldQueue
             ->subject("{$this->title()}: {$this->itemName}")
             ->line("{$this->itemType} “{$this->itemName}” is {$this->describe()}.")
             ->line("In stock: {$this->quantity} (alert level: under {$this->threshold}).")
-            ->action('Open inventory', $this->url());
+            ->action('Open in list', $this->url());
     }
 
     /**
@@ -81,7 +87,7 @@ class LowStockAlert extends Notification implements ShouldQueue
             ->body("{$this->itemType} — {$this->quantity} left (alert under {$this->threshold}).")
             ->icon($this->status->getIcon())
             ->iconColor($this->status->getColor())
-            ->actions([Action::make('open')->label('Open inventory')->url($this->url())->markAsRead()])
+            ->actions([Action::make('open')->label('Open in list')->url($this->url())->markAsRead()])
             ->getDatabaseMessage();
     }
 
@@ -97,6 +103,6 @@ class LowStockAlert extends Notification implements ShouldQueue
 
     private function url(): string
     {
-        return StockItemResource::getUrl('index', ['filters' => ['status' => ['value' => $this->status->value]]], panel: 'admin');
+        return $this->listingUrl ?? url('/admin');
     }
 }

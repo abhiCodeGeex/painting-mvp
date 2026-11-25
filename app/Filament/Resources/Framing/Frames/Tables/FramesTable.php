@@ -6,6 +6,7 @@ use App\Enums\FrameFinish;
 use App\Enums\FrameMaterial;
 use App\Enums\FrameProfile;
 use App\Filament\Support\MasterTable;
+use App\Filament\Support\StockColumns;
 use App\Models\Frame;
 use Filament\Tables\Columns\SpatieMediaLibraryImageColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -17,7 +18,7 @@ class FramesTable
 {
     public static function configure(Table $table): Table
     {
-        return MasterTable::configure($table, [
+        return StockColumns::apply(MasterTable::configure($table, [
             SpatieMediaLibraryImageColumn::make('corner')
                 ->label('Photo')
                 ->collection('corner')
@@ -39,11 +40,11 @@ class FramesTable
             MasterTable::mm('profile_width_mm', 'Width'),
             MasterTable::mm('profile_depth_mm', 'Depth')->toggleable(),
             MasterTable::money('price_per_m', 'Cost / m'),
-            MasterTable::stock(),
+            ...StockColumns::columns(),
         ], [
             SelectFilter::make('material')->options(FrameMaterial::class),
             SelectFilter::make('finish')->options(FrameFinish::class),
             SelectFilter::make('profile')->label('Shape')->options(FrameProfile::class),
-        ])->modifyQueryUsing(fn ($query) => $query->with(['media', 'stockItem']));
+        ]))->modifyQueryUsing(fn ($query) => $query->with('media'));
     }
 }

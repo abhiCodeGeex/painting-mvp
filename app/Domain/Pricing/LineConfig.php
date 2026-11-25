@@ -24,12 +24,14 @@ final readonly class LineConfig
         public ?int $substrateId = null,
         public ?int $frameId = null,
         public bool $frameAdvice = false,
+        /** Frame layers, innermost first (FrameLayers::normalise shape); empty = just $frameId, if any. */
+        public array $frameLayers = [],
         public ?int $matId = null,
         public ?int $matBorderMm = null,
         public ?int $glazingId = null,
         public array $finishingIds = [],
         public ?string $ownService = null,
-        public ?int $complexityLevelId = null,
+        public ?int $artistId = null,
     ) {}
 
     /**
@@ -49,18 +51,20 @@ final readonly class LineConfig
             qualityTierId: $int('quality_tier_id'),
             mediumId: $int('medium_id'),
             substrateId: $int('substrate_id'),
-            frameId: $int('frame_id'),
+            frameId: ($layers = FrameLayers::normalise($d['frame_layers'] ?? null, $int('frame_id')))[0]['frame_id'] ?? null,
             frameAdvice: filter_var($d['frame_advice_requested'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            frameLayers: $layers,
             matId: $int('mat_id'),
             matBorderMm: $int('mat_border_mm'),
             glazingId: $int('glazing_id'),
             finishingIds: array_values(array_map('intval', (array) ($d['finishing_ids'] ?? []))),
             ownService: $d['own']['service'] ?? $d['own_service'] ?? null,
-            complexityLevelId: $int('complexity_level_id'),
+            artistId: $int('artist_id'),
         );
     }
 
-    public static function fromLine(EnquiryLine $line, ?int $complexityLevelId = null): self
+    /** $artistId: the artist chosen on the quote for a new creation. */
+    public static function fromLine(EnquiryLine $line, ?int $artistId = null): self
     {
         $line->loadMissing('finishings');
 
@@ -74,14 +78,15 @@ final readonly class LineConfig
             qualityTierId: $line->quality_tier_id,
             mediumId: $line->medium_id,
             substrateId: $line->substrate_id,
-            frameId: $line->frame_id,
+            frameId: $line->frameLayers()[0]['frame_id'] ?? null,
             frameAdvice: $line->frame_advice_requested,
+            frameLayers: $line->frameLayers(),
             matId: $line->mat_id,
             matBorderMm: $line->mat_border_mm,
             glazingId: $line->glazing_id,
             finishingIds: $line->finishings->pluck('id')->all(),
             ownService: $line->own_artwork['service'] ?? null,
-            complexityLevelId: $complexityLevelId,
+            artistId: $artistId,
         );
     }
 }

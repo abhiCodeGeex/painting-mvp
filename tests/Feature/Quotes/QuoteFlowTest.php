@@ -8,6 +8,7 @@ use App\Enums\Role;
 use App\Filament\Resources\Sales\Enquiries\Pages\ViewEnquiry;
 use App\Filament\Resources\Sales\Quotes\Pages\EditQuote;
 use App\Filament\Resources\Sales\Quotes\Pages\ListQuotes;
+use App\Models\Artist;
 use App\Models\Artwork;
 use App\Models\Customer;
 use App\Models\Enquiry;
@@ -17,6 +18,7 @@ use App\Models\Medium;
 use App\Models\State;
 use App\Models\Substrate;
 use App\Models\User;
+use App\Models\WorkCharge;
 use App\Notifications\QuoteSent;
 use App\Settings\CompanySettings;
 use App\Settings\PricingSettings;
@@ -281,4 +283,149 @@ test('the quote PDF template shows lines, GST split and the grand total', functi
         ->toContain(Money::format($quote->grand_total))
         ->not->toContain('IGST');
 
+});
+
+test('each quote line keeps a breakdown of how its price was worked out, shown on the edit page', function () {
+    $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    $rows = collect($line->breakdown['components'])->keyBy('key');
+
+    expect($rows->keys()->all())->toContain('artwork', 'substrate', 'frame', 'glazing')->not->toContain('labour')
+        ->and($rows['frame']['measure'])->toContain('perimeter')->toContain('waste')
+        ->and($rows['frame']['rate'])->toContain('/m (')
+        ->and($rows['substrate']['measure'])->toBe('60 × 40 cm = 0.24 m²')
+        ->and($line->breakdown['unit_price'])->toBe($line->calculated_unit_price)
+        ->and($line->breakdown['unit_cost'])->toBe($line->unit_cost);
+
+    $this->actingAs($this->admin);
+    Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
+        ->assertOk()
+        ->assertSee('Price breakdown')
+        ->assertSee($rows['frame']['rate'])
+        ->assertDontSee('Framing work')
+        ->assertSee('Calculated unit price')
+        ->assertSee('What the customer asked for')
+        ->assertSee('Labour (per piece)');
+});
+
+test('a new creation is pending until the admin chooses an artist, then priced by their fee', function () {
+    $enquiry = submittedEnquiry($this->customer);
+    $enquiryLine = $enquiry->lines()->firstOrFail();
+    $enquiryLine->update(['source_type' => 'custom_creation', 'artwork_id' => null]);
+    $asha = Artist::where('name', 'Asha Menon')->firstOrFail();
+    expect($asha->fee_per_m2)->toBe(6_000_000); // seeded
+
+    $open = app(QuoteBuilder::class)->linePrice($enquiryLine->fresh(), $enquiry);
+    expect($open['breakdown']['pending'])->toContain('Choose an artist')
+        ->and(collect($open['breakdown']['components'])->pluck('key'))->not->toContain('artwork');
+
+    $price = app(QuoteBuilder::class)->linePrice($enquiryLine->fresh(), $enquiry, $asha->id);
+    $artwork = collect($price['breakdown']['components'])->firstWhere('key', 'artwork');
+    $factor = (float) Medium::where('name', 'Giclée print')->value('price_factor');
+
+    // 60 × 40 cm = 0.24 m² × ₹60,000 × medium factor; no complexity, no artist labour.
+    expect($artwork['sell'])->toBe((int) round(0.24 * 6_000_000 * $factor))
+        ->and($artwork['label'])->toBe('New artwork by Asha Menon')
+        ->and($artwork['rate'])->toContain('(artist fee: Asha Menon)')
+        ->and($price['artist_id'])->toBe($asha->id)
+        ->and($price['calculated_unit_price'])->toBe($open['calculated_unit_price'] + $artwork['sell'])
+        ->and(collect($price['breakdown']['components'])->pluck('key'))->not->toContain('artist_labour')->not->toContain('labour');
+});
+
+test('choosing the artist on the quote page re-prices the line straight away', function () {
+    $enquiry = submittedEnquiry($this->customer);
+    $enquiry->lines()->firstOrFail()->update(['source_type' => 'custom_creation', 'artwork_id' => null]);
+    $quote = app(QuoteBuilder::class)->createFromEnquiry($enquiry->fresh(), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    $luca = Artist::where('name', 'Luca Bianchi')->firstOrFail();
+    $expected = app(QuoteBuilder::class)->linePrice($line->enquiryLine, $enquiry, $luca->id)['calculated_unit_price'];
+
+    $this->actingAs($this->admin);
+    $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
+        ->assertOk()
+        ->assertSee('Choose an artist');
+    $key = array_key_first($page->get('data.lines'));
+
+    $page->set("data.lines.{$key}.artist_id", $luca->id)
+        ->assertSet("data.lines.{$key}.calculated_unit_price", $expected)
+        ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($expected))
+        ->assertSee('artist fee: Luca Bianchi')
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($line->fresh())->artist_id->toBe($luca->id)
+        ->unit_price->toBe($expected)
+        ->line_total->toBe($expected * 2);
+});
+
+test('labour entered on a quote line is added to the unit price and the line total', function () {
+    $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    $engine = $line->calculated_unit_price;
+
+    $this->actingAs($this->admin);
+    $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()]);
+    $key = array_key_first($page->get('data.lines'));
+
+    $page->set("data.lines.{$key}.labour_amount", '750')
+        ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 75_000)
+        ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($engine + 75_000))
+        ->assertSee('Labour (entered on quote)')
+        ->assertSee(Money::format(($engine + 75_000) * 2)) // live totals
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $line->refresh();
+    expect($line->labour_amount)->toBe(75_000)
+        ->and($line->unit_price)->toBe($engine + 75_000)
+        ->and($line->calculated_unit_price)->toBe($engine + 75_000)
+        ->and($line->isOverridden())->toBeFalse()
+        ->and($line->line_total)->toBe(($engine + 75_000) * 2)
+        ->and($quote->fresh()->items_total)->toBe(($engine + 75_000) * 2);
+
+    // A hand-typed price different from calculated + labour needs a reason.
+    Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
+        ->set("data.lines.{$key}.unit_price", Money::toRupees($engine + 1_000))
+        ->call('save')
+        ->assertHasFormErrors(["lines.{$key}.override_reason" => 'required']);
+});
+
+test('work after the artwork takes its amount from Work charges, can be changed on the quote, and adds to the price', function () {
+    $installation = WorkCharge::where('name', 'Installation')->firstOrFail();
+    expect($installation->amount)->toBe(300_000); // ₹3,000 default
+
+    $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    $engine = $line->calculated_unit_price;
+
+    $this->actingAs($this->admin);
+    $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()])->assertSee('Work after the artwork');
+    $key = array_key_first($page->get('data.lines'));
+
+    // Picking the work fills in the master amount and re-prices the line.
+    $page->set("data.lines.{$key}.work_items", ['w1' => ['work_charge_id' => null, 'name' => null, 'amount' => '0']])
+        ->set("data.lines.{$key}.work_items.w1.work_charge_id", $installation->id)
+        ->assertSet("data.lines.{$key}.work_items.w1.amount", '3000')
+        ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 300_000)
+        ->assertSee('Work: Installation');
+
+    // Staff lower it for this quote only.
+    $page->set("data.lines.{$key}.work_items.w1.amount", '2500')
+        ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 250_000)
+        ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($engine + 250_000))
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $line->refresh();
+    expect($line->work_items)->toHaveCount(1)
+        ->and($line->work_items[0])->toMatchArray(['work_charge_id' => $installation->id, 'name' => 'Installation', 'amount' => 250_000])
+        ->and($line->workTotal())->toBe(250_000)
+        ->and($line->unit_price)->toBe($engine + 250_000)
+        ->and($line->isOverridden())->toBeFalse()
+        ->and($line->line_total)->toBe(($engine + 250_000) * 2)
+        ->and($installation->fresh()->amount)->toBe(300_000); // the master is unchanged
+});
+
+test('work charges are managed as a pricing master', function () {
+    $this->actingAs($this->admin)->get('/admin/pricing/work-charges')->assertOk()->assertSee('Installation');
 });

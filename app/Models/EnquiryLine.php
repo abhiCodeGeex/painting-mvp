@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Domain\Pricing\FrameLayers;
 use App\Enums\EdgeStyle;
 use App\Enums\LengthUnit;
 use App\Enums\LineSource;
@@ -41,6 +42,7 @@ class EnquiryLine extends Model implements HasMedia
             'own_artwork' => 'array',
             'rights_confirmed_at' => 'datetime',
             'frame_advice_requested' => 'boolean',
+            'frame_layers' => 'array',
             'width_mm' => 'integer',
             'height_mm' => 'integer',
             'image_rotation' => 'integer',
@@ -97,6 +99,29 @@ class EnquiryLine extends Model implements HasMedia
     public function frame(): BelongsTo
     {
         return $this->belongsTo(Frame::class)->withTrashed();
+    }
+
+    /**
+     * Frame layers, innermost first (each optionally split between two mouldings). A line saved with only
+     * frame_id is one plain layer.
+     *
+     * @return list<array{frame_id: int, split: array{frame_id: int, mode: string}|null}>
+     */
+    public function frameLayers(): array
+    {
+        return FrameLayers::normalise($this->frame_layers, $this->frame_id);
+    }
+
+    /** e.g. "Oak 20 mm + Gold 30 mm around · Frame 1 split: top half / bottom half Walnut", or null without a frame. */
+    public function frameLayersLabel(): ?string
+    {
+        $layers = $this->frameLayers();
+        if ($layers === []) {
+            return null;
+        }
+        $frames = Frame::withTrashed()->whereIn('id', FrameLayers::frameIds($layers))->pluck('name', 'id');
+
+        return FrameLayers::describe($layers, fn (int $id): string => $frames[$id] ?? 'Frame #'.$id);
     }
 
     /**

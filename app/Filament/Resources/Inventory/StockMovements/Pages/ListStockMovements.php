@@ -9,9 +9,9 @@ class ListStockMovements extends ListRecords
 {
     protected static string $resource = StockMovementResource::class;
 
-    protected static ?string $title = 'Stock movements';
+    protected static ?string $title = 'Stock history';
 
-    protected ?string $subheading = 'Every stock change: deliveries, usage and stock counts, with who made it.';
+    protected ?string $subheading = 'Every stock change (refills, reductions, stock counts) with who made it. Stock is refilled or reduced from each item\'s own list.';
 
     protected function getHeaderActions(): array
     {

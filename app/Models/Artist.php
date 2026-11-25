@@ -16,6 +16,12 @@ class Artist extends Model implements HasMedia
 
     protected $guarded = ['id'];
 
+    /** Fee per m² for this artist's work (paise), before medium and quality tier factors. */
+    protected function casts(): array
+    {
+        return ['fee_per_m2' => 'integer'];
+    }
+
     /**
      * @return HasMany<Artwork, $this>
      */

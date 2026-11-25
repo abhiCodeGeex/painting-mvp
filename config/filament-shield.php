@@ -27,7 +27,7 @@ return [
             'pages' => true,
             'widgets' => true,
             'resources' => true,
-            'custom_permissions' => false,
+            'custom_permissions' => true,
         ],
     ],
 
@@ -252,7 +252,13 @@ return [
     |
     */
 
-    'custom_permissions' => [],
+    // Stock is managed inside the frame / mat / glazing / substrate lists (no Stock resource of
+    // its own), so its permissions, used by StockItemPolicy, are listed here.
+    'custom_permissions' => [
+        'ViewAny:StockItem' => 'View stock and stock history',
+        'View:StockItem' => 'View the stock of an item',
+        'Update:StockItem' => 'Refill / reduce stock and set alert levels',
+    ],
 
     /*
     |--------------------------------------------------------------------------

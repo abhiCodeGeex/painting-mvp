@@ -24,7 +24,8 @@ Route::get('admin-files/quotes/{quote}/pdf', [QuoteController::class, 'adminPdf'
     ->middleware('auth')
     ->name('admin.quotes.pdf');
 
-// Customer portal (staff are redirected to /admin by the "customer" middleware)
+// Customer portal (staff are redirected to /admin by the "customer" middleware, except on the
+// enquiry editor routes they use to raise and edit enquiries for a customer)
 Route::middleware(['auth', 'verified', 'customer'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
 
@@ -49,6 +50,8 @@ Route::middleware(['auth', 'verified', 'customer'])->group(function () {
         Route::post('enquiries/{enquiry}/lines/{line}', [EnquiryLineController::class, 'update'])->name('enquiries.lines.update');
         Route::post('enquiries/{enquiry}/lines/{line}/duplicate', [EnquiryLineController::class, 'duplicate'])->name('enquiries.lines.duplicate');
         Route::delete('enquiries/{enquiry}/lines/{line}', [EnquiryLineController::class, 'destroy'])->name('enquiries.lines.destroy');
+
+        Route::post('enquiries/{enquiry}/addresses', [AddressController::class, 'storeForEnquiry'])->name('enquiries.addresses.store');
 
         Route::post('enquiries/{enquiry}/messages', [EnquiryMessageController::class, 'store'])->name('enquiries.messages.store');
     });

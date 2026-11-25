@@ -10,10 +10,10 @@ use Spatie\LaravelSettings\Settings;
  */
 class PricingSettings extends Settings
 {
-    /** Labour charged on every piece (paise). */
+    /** Unused: labour is now entered per quote line. Kept so old settings rows still load. */
     public int $labour_fixed_per_piece;
 
-    /** Labour per metre of frame perimeter (paise). */
+    /** Unused: labour is now entered per quote line. */
     public int $labour_per_perimeter_m;
 
     /** Markup applied to cost to get the selling price, in %. */
@@ -40,7 +40,7 @@ class PricingSettings extends Settings
     /** Extra clearance added to the frame rebate on each side (mm). */
     public int $rebate_allowance_mm;
 
-    /** Artist fee for a new creation per m² (paise), before medium / quality / complexity factors. */
+    /** Unused: the artist fee per m² is now set on each artist. */
     public int $commission_price_per_m2;
 
     /** Customer estimate while building an enquiry: exact | range | hidden. */

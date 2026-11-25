@@ -30,8 +30,8 @@ class DemoCatalogSeeder extends Seeder
             'Watercolour' => Category::where('slug', 'hand-painting-modern')->firstOrFail(),
         ];
 
-        $asha = Artist::firstOrCreate(['name' => 'Asha Menon'], ['bio' => 'Abstract painter working in layered acrylics.', 'country' => 'IN']);
-        $luca = Artist::firstOrCreate(['name' => 'Luca Bianchi'], ['bio' => 'Landscape photographer.', 'country' => 'IT']);
+        $asha = Artist::firstOrCreate(['name' => 'Asha Menon'], ['bio' => 'Abstract painter working in layered acrylics.', 'country' => 'IN', 'fee_per_m2' => 6_000_000]);
+        $luca = Artist::firstOrCreate(['name' => 'Luca Bianchi'], ['bio' => 'Landscape photographer.', 'country' => 'IT', 'fee_per_m2' => 4_000_000]);
 
         $giclee = Medium::where('name', 'Giclée print')->first();
         $acrylic = Medium::where('name', 'Acrylic on canvas')->first();

@@ -142,7 +142,50 @@ const PROFILES: Record<FrameProfileShape, Profile> = {
  * Builds the moulding around an opening of innerW × innerH (metres).
  * faceW = face width, depth = front-to-back depth (metres). The back of the frame is at z = 0.
  */
-export function buildMoulding(innerW: number, innerH: number, faceW: number, depth: number, frame: PreviewFrame): THREE.Mesh {
+/** Part of a moulding: one side (0 top, 1 right, 2 bottom, 3 left, clockwise) from `from` to `to` along it (0..1). */
+export interface MouldingPart {
+    side: number;
+    from: number;
+    to: number;
+}
+
+const ALL_SIDES: MouldingPart[] = [0, 1, 2, 3].map((side) => ({ side, from: 0, to: 1 }));
+
+/**
+ * The parts of a split frame layer that each moulding covers. 'top_bottom_sides': the primary on the
+ * top and bottom, the second on the sides. 'halves': the primary on the top rail and the upper halves
+ * of the sides, the second on the bottom rail and the lower halves (cut straight across at mid-height).
+ */
+export function splitParts(mode: 'top_bottom_sides' | 'halves'): { primary: MouldingPart[]; second: MouldingPart[] } {
+    if (mode === 'top_bottom_sides') {
+        return {
+            primary: [0, 2].map((side) => ({ side, from: 0, to: 1 })),
+            second: [1, 3].map((side) => ({ side, from: 0, to: 1 })),
+        };
+    }
+    // The right side runs top → bottom, the left side bottom → top.
+    return {
+        primary: [
+            { side: 0, from: 0, to: 1 },
+            { side: 1, from: 0, to: 0.5 },
+            { side: 3, from: 0.5, to: 1 },
+        ],
+        second: [
+            { side: 2, from: 0, to: 1 },
+            { side: 1, from: 0.5, to: 1 },
+            { side: 3, from: 0, to: 0.5 },
+        ],
+    };
+}
+
+export function buildMoulding(
+    innerW: number,
+    innerH: number,
+    faceW: number,
+    depth: number,
+    frame: PreviewFrame,
+    parts: MouldingPart[] = ALL_SIDES,
+): THREE.Mesh {
     const profile = PROFILES[frame.profile ?? 'flat'] ?? PROFILES.flat;
     const positions: number[] = [];
     const uvs: number[] = [];
@@ -177,16 +220,21 @@ export function buildMoulding(innerW: number, innerH: number, faceW: number, dep
             runV.push(v);
         }
 
-        for (let s = 0; s < 4; s++) {
+        for (const part of parts) {
             const base = positions.length / 3;
             for (let j = 0; j < run.length; j++) {
                 const [d, z] = run[j];
-                const [start, end] = sides(d * faceW)[s];
-                const length = start.distanceTo(end);
+                const [corner0, corner1] = sides(d * faceW)[part.side];
+                const length = corner0.distanceTo(corner1);
+                // A part of the side: at mid-height the cut is straight across (the same point for every d).
+                const start = corner0.clone().lerp(corner1, part.from);
+                const end = corner0.clone().lerp(corner1, part.to);
+                const u0 = -length / 2 + part.from * length;
+                const u1 = -length / 2 + part.to * length;
                 // u runs along the side (per metre), centred so the pattern meets nicely at the mitres
                 positions.push(start.x, start.y, z * depth, end.x, end.y, z * depth);
-                if (strip) uvs.push(-length / 2 / faceW, d, length / 2 / faceW, d);
-                else uvs.push(-length / 2, runV[j], length / 2, runV[j]);
+                if (strip) uvs.push(u0 / faceW, d, u1 / faceW, d);
+                else uvs.push(u0, runV[j], u1, runV[j]);
             }
             for (let j = 0; j < run.length - 1; j++) {
                 const a = base + j * 2;

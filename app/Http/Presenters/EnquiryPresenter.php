@@ -102,6 +102,8 @@ class EnquiryPresenter
             'substrate_id' => $line->substrate_id,
             'edge_style' => $line->edge_style?->value,
             'frame_id' => $line->frame_id,
+            // Innermost first; a line with only frame_id is one plain layer.
+            'frame_layers' => $line->frameLayers(),
             'frame_advice_requested' => $line->frame_advice_requested,
             'mat_id' => $line->mat_id,
             'mat_border_mm' => $line->mat_border_mm,
@@ -116,7 +118,7 @@ class EnquiryPresenter
                 'quality' => $line->qualityTier?->name,
                 'medium' => $line->medium?->name,
                 'substrate' => $line->substrate?->name,
-                'frame' => $line->frame?->name,
+                'frame' => count($line->frameLayers()) > 1 || ($line->frameLayers()[0]['split'] ?? null) ? $line->frameLayersLabel() : $line->frame?->name,
                 'mat' => $line->mat?->name,
                 'glazing' => $line->glazing?->name,
                 'finishings' => $line->finishings->pluck('name')->all(),

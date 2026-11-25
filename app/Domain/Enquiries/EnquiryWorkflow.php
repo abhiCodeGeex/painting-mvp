@@ -4,10 +4,13 @@ namespace App\Domain\Enquiries;
 
 use App\Domain\Pricing\CustomerEstimate;
 use App\Domain\Support\DocumentNumber;
+use App\Enums\AddressKind;
 use App\Enums\EnquiryStatus;
 use App\Enums\MessageKind;
 use App\Enums\Role;
+use App\Models\Customer;
 use App\Models\Enquiry;
+use App\Models\EnquirySource;
 use App\Models\Message;
 use App\Models\StatusHistory;
 use App\Models\User;
@@ -27,6 +30,19 @@ use Illuminate\Validation\ValidationException;
  */
 class EnquiryWorkflow
 {
+    /**
+     * An empty draft for the customer (from the portal, or raised by staff on their behalf),
+     * so artworks and files can be attached to it straight away.
+     */
+    public function createDraft(Customer $customer, ?int $sourceId = null, ?string $projectName = null): Enquiry
+    {
+        return $customer->enquiries()->create([
+            'project_name' => $projectName ?: 'My artwork project',
+            'source_id' => $sourceId ?? $customer->source_id ?? EnquirySource::where('name', 'Website')->value('id'),
+            'delivery_address_id' => $customer->addresses()->where('kind', AddressKind::Delivery)->orderByDesc('is_default')->value('id'),
+        ]);
+    }
+
     /**
      * Customer (or staff on their behalf) submits a draft.
      */
@@ -54,7 +70,8 @@ class EnquiryWorkflow
             $enquiry->estimate_snapshot = app(CustomerEstimate::class)->forEnquiry($enquiry);
             // No manual assignment needed: a new enquiry goes straight to the super admin.
             $enquiry->assigned_to ??= $this->defaultAssignee()?->id;
-            $this->transition($enquiry, EnquiryStatus::Submitted, $by);
+            // Staff sending it for the customer is recorded in the status history.
+            $this->transition($enquiry, EnquiryStatus::Submitted, $by, $by->isStaff() ? "Sent by {$by->name} (staff) on behalf of the customer." : null);
             $this->systemMessage($enquiry, 'Enquiry submitted.');
         });
 

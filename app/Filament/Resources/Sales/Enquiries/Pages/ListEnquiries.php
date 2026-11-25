@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Sales\Enquiries\Pages;
 
 use App\Enums\EnquiryStatus;
+use App\Filament\Resources\Sales\Enquiries\Actions\RaiseEnquiryAction;
 use App\Filament\Resources\Sales\Enquiries\EnquiryResource;
 use App\Models\Enquiry;
 use Filament\Resources\Pages\ListRecords;
@@ -12,6 +13,11 @@ use Illuminate\Database\Eloquent\Builder;
 class ListEnquiries extends ListRecords
 {
     protected static string $resource = EnquiryResource::class;
+
+    protected function getHeaderActions(): array
+    {
+        return [RaiseEnquiryAction::make()];
+    }
 
     /**
      * Inbox-style tabs. Drafts are the customer's unfinished work and are kept apart.

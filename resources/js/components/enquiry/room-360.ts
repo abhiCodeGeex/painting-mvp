@@ -35,7 +35,7 @@ import {
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { ArView } from './ar-view';
-import { WALL_COLOURS, type WallPiece } from './preview-helpers';
+import { framesWidth, WALL_COLOURS, type WallPiece } from './preview-helpers';
 import { onFrameStripLoaded } from './three/moulding';
 import { buildArtwork, coverTexture, disposeTree, gradientTexture, M } from './three/scene-parts';
 
@@ -225,7 +225,8 @@ function dimsOf(p: WallPiece): PieceDims {
     const picH = M(Math.max(50, p.heightMm || 0));
     const matB = p.mat ? M(p.mat.border_mm) : 0;
     const matBottom = p.mat ? M(p.mat.bottom_weight_mm ?? 0) : 0;
-    const frameW = p.frame ? M(p.frame.width_mm) : 0;
+    // All frame layers together (stacked frames): the glass sits in the inner opening.
+    const frameW = M(framesWidth(p.frame, p.layers));
     return { picW, picH, matB, matBottom, frameW, outerW: picW + 2 * matB + 2 * frameW, outerH: picH + 2 * matB + matBottom + 2 * frameW };
 }
 
@@ -1453,6 +1454,7 @@ export class Room360 implements OnDestroy {
         for (const { piece, d, x, y, key } of placed) {
             const group = buildArtwork(d, {
                 frame: piece.frame,
+                layers: piece.layers,
                 mat: piece.mat,
                 glazing: piece.glazing,
                 depthMm: piece.depthMm,

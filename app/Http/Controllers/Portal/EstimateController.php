@@ -33,6 +33,8 @@ class EstimateController extends Controller
             'substrate_id' => ['nullable', 'integer'],
             'frame_id' => ['nullable', 'integer'],
             'frame_advice_requested' => ['boolean'],
+            // Stacked / split frames (FrameLayers::normalise cleans it up; unknown frames are ignored).
+            'frame_layers' => ['nullable', 'array', 'max:3'],
             'mat_id' => ['nullable', 'integer'],
             'mat_border_mm' => ['nullable', 'integer', 'min:10', 'max:300'],
             'glazing_id' => ['nullable', 'integer'],

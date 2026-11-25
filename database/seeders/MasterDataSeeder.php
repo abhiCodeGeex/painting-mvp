@@ -86,13 +86,15 @@ class MasterDataSeeder extends Seeder
         }
 
         $levels = [
-            ['Simple', 1.0, 'Abstract or minimal compositions, few elements.'],
-            ['Medium', 1.35, 'Landscapes, still life, moderate detail.'],
-            ['Complex', 1.8, 'Portraits, figurative or highly detailed work.'],
+            // name, price factor, artist labour per m² (paise), artist minimum per piece (paise)
+            ['Simple', 1.0, 600_000, 150_000, 'Abstract or minimal compositions, few elements.'],
+            ['Medium', 1.35, 1_000_000, 250_000, 'Landscapes, still life, moderate detail.'],
+            ['Complex', 1.8, 1_600_000, 400_000, 'Portraits, figurative or highly detailed work.'],
         ];
-        foreach ($levels as $i => [$name, $factor, $description]) {
+        foreach ($levels as $i => [$name, $factor, $rate, $minimum, $description]) {
             ComplexityLevel::firstOrCreate(['name' => $name], [
-                'price_factor' => $factor, 'description' => $description, 'sort_order' => $i,
+                'price_factor' => $factor, 'artist_rate_per_m2' => $rate, 'artist_minimum' => $minimum,
+                'description' => $description, 'sort_order' => $i,
             ]);
         }
 

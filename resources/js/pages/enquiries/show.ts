@@ -427,6 +427,7 @@ export class CancelDialog {
                         [widthMm]="hungSize(p).width_mm"
                         [heightMm]="hungSize(p).height_mm"
                         [frame]="previewParts().frame"
+                        [layers]="previewParts().layers"
                         [mat]="previewParts().mat"
                         [depthMm]="previewParts().depthMm"
                         [glazing]="previewParts().glazing"
@@ -469,6 +470,6 @@ export default class ShowEnquiry {
     protected olderQuotes = computed(() => (this.props().quotes ?? []).filter((q) => !q.is_current));
     protected previewParts = computed(() => {
         const p = this.preview();
-        return p ? previewParts(this.props().options, p) : { frame: null, mat: null, depthMm: 0, glazing: 'none' as const };
+        return p ? previewParts(this.props().options, p) : { frame: null, layers: [], mat: null, depthMm: 0, glazing: 'none' as const };
     });
 }

@@ -16,7 +16,7 @@ import {
 } from '@angular/core';
 import { Expand, LoaderCircle, Minus, Plus, ScanSearch, X } from 'lucide';
 import { FramedArt } from './framed-art';
-import { outerSize, type PreviewFrame, type PreviewMat } from './preview-helpers';
+import { outerSize, type PreviewFrame, type PreviewLayer, type PreviewMat } from './preview-helpers';
 
 /**
  * Full-page view of an artwork with its frame and mat: zoom from the whole piece down to the picture's
@@ -116,6 +116,7 @@ import { outerSize, type PreviewFrame, type PreviewMat } from './preview-helpers
                                 [widthMm]="widthMm()"
                                 [heightMm]="heightMm()"
                                 [frame]="frame()"
+                                [layers]="layers()"
                                 [mat]="mat()"
                                 [depthMm]="depthMm()"
                                 [rotation]="rotation()"
@@ -143,6 +144,8 @@ export class ArtworkLightbox {
     readonly widthMm = input.required<number>();
     readonly heightMm = input.required<number>();
     readonly frame = input<PreviewFrame | null>(null);
+    /** Stacked / split frames, innermost first (optional; layers[0] is `frame`). */
+    readonly layers = input<PreviewLayer[] | null>(null);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
     /** Picture turned clockwise (0/90/180/270°); widthMm/heightMm are already the turned piece's size. */
@@ -168,7 +171,7 @@ export class ArtworkLightbox {
     /** Base drawing scale (px per mm) so the whole framed piece fits the screen at zoom 1. */
     private viewport = signal({ w: window.innerWidth, h: window.innerHeight - 56 });
     protected mmScale = computed(() => {
-        const o = outerSize(this.widthMm(), this.heightMm(), this.frame(), this.mat());
+        const o = outerSize(this.widthMm(), this.heightMm(), this.frame(), this.mat(), this.layers());
         const v = this.viewport();
         return Math.min((v.w - 2 * this.pad) / o.width, (v.h - 2 * this.pad) / o.height) * 0.92;
     });
@@ -251,7 +254,7 @@ export class ArtworkLightbox {
     /** Whole piece centred on screen. */
     reset(): void {
         const el = this.stage()?.nativeElement;
-        const o = outerSize(this.widthMm(), this.heightMm(), this.frame(), this.mat());
+        const o = outerSize(this.widthMm(), this.heightMm(), this.frame(), this.mat(), this.layers());
         const w = o.width * this.mmScale() + 2 * this.pad;
         const h = o.height * this.mmScale() + 2 * this.pad;
         const sw = el?.clientWidth ?? window.innerWidth;

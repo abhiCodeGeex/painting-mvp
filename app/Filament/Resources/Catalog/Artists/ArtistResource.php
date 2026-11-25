@@ -6,7 +6,9 @@ use App\Filament\Resources\Catalog\Artists\Pages\ManageArtists;
 use App\Filament\Support\MasterForm;
 use App\Filament\Support\MasterResource;
 use App\Filament\Support\MasterTable;
+use App\Filament\Support\MoneyInput;
 use App\Models\Artist;
+use App\Support\Money;
 use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
 use Filament\Forms\Components\SpatieMediaLibraryFileUpload;
@@ -51,6 +53,9 @@ class ArtistResource extends MasterResource
                 ->alpha()
                 ->dehydrateStateUsing(fn (?string $state): ?string => $state ? strtoupper($state) : null)
                 ->helperText('Two letters, e.g. IN, IT.'),
+            MoneyInput::make('fee_per_m2')->label('Fee per m²')->suffix('/ m²')->default(0)->required()
+                ->dehydrateStateUsing(fn ($state): int => $state === null || $state === '' ? 0 : Money::toPaise((string) $state))
+                ->helperText('Prices new creations by this artist, and their catalogue artworks that have no price of their own. Before medium and quality factors.'),
             Textarea::make('bio')->rows(4)->columnSpanFull(),
             ...MasterForm::status(),
         ])->columns(2);
@@ -62,6 +67,7 @@ class ArtistResource extends MasterResource
             SpatieMediaLibraryImageColumn::make('photo')->collection('photo')->conversion('thumb')->circular()->label(''),
             TextColumn::make('name')->searchable(),
             TextColumn::make('country'),
+            MasterTable::money('fee_per_m2', 'Fee per m²'),
             TextColumn::make('artworks_count')->counts('artworks')->label('Artworks')->alignEnd(),
         ]);
     }

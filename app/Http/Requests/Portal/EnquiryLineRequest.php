@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Portal;
 
 use App\Domain\Enquiries\LineCompatibility;
+use App\Domain\Pricing\FrameLayers;
 use App\Enums\EdgeStyle;
 use App\Enums\LengthUnit;
 use App\Enums\LineSource;
@@ -21,7 +22,7 @@ class EnquiryLineRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('update', $this->route('enquiry'));
+        return $this->route('enquiry')->isEditableBy($this->user());
     }
 
     /**
@@ -74,6 +75,12 @@ class EnquiryLineRequest extends FormRequest
             'edge_style' => ['nullable', Rule::enum(EdgeStyle::class)],
             'frame_id' => ['nullable', Rule::exists('frames', 'id')->whereNull('deleted_at')],
             'frame_advice_requested' => ['boolean'],
+            // Stacked frames, innermost first; any layer may be split between two mouldings.
+            'frame_layers' => ['nullable', 'array', 'max:'.FrameLayers::MAX],
+            'frame_layers.*.frame_id' => ['required', 'integer', $activeFrame = Rule::exists('frames', 'id')->where('is_active', true)->whereNull('deleted_at')],
+            'frame_layers.*.split' => ['nullable', 'array'],
+            'frame_layers.*.split.frame_id' => ['required_with:frame_layers.*.split', 'integer', $activeFrame],
+            'frame_layers.*.split.mode' => ['required_with:frame_layers.*.split', Rule::in(FrameLayers::MODES)],
             'mat_id' => ['nullable', Rule::exists('mats', 'id')->whereNull('deleted_at')],
             'mat_border_mm' => ['nullable', 'integer', 'min:10', 'max:300'],
             'glazing_id' => ['nullable', Rule::exists('glazings', 'id')->whereNull('deleted_at')],
@@ -89,11 +96,41 @@ class EnquiryLineRequest extends FormRequest
     }
 
     /**
+     * The editor posts multipart form data, so the frame layers arrive as JSON text. An empty split
+     * (no second frame) means a plain layer.
+     */
+    protected function prepareForValidation(): void
+    {
+        $layers = $this->input('frame_layers');
+        if (is_string($layers)) {
+            $layers = $layers === '' ? null : json_decode($layers, true);
+            $layers = is_array($layers) ? $layers : null;
+        }
+        if (is_array($layers)) {
+            $layers = array_map(function ($layer) {
+                if (is_array($layer) && array_key_exists('split', $layer)
+                    && (! is_array($layer['split']) || empty($layer['split']['frame_id']))) {
+                    $layer['split'] = null;
+                }
+
+                return $layer;
+            }, array_values($layers));
+        }
+        $this->merge(['frame_layers' => $layers ?: null]);
+        // frame_id is always the first (inner) layer's frame.
+        if ($layers && is_array($layers[0] ?? null) && ! empty($layers[0]['frame_id'])) {
+            $this->merge(['frame_id' => $layers[0]['frame_id']]);
+        }
+    }
+
+    /**
      * @return array<string, string>
      */
     public function messages(): array
     {
         return [
+            'frame_layers.max' => 'A picture can have at most '.FrameLayers::MAX.' frames.',
+            'frame_layers.*.split.mode.in' => 'Choose how to split the frame: top & bottom / sides, or top half / bottom half.',
             'artwork_id.required' => 'Choose an artwork from the catalog.',
             'brief.description.required' => 'Describe the artwork you would like us to create.',
             'brief.usage_rights.required' => 'Tell us where the artwork will be displayed.',

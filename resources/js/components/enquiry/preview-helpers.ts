@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import type { CatalogOptions } from '@/types/portal';
+import type { CatalogFrame, CatalogOptions, FrameLayerInput, FrameSplitMode } from '@/types/portal';
 
 export type GlazingLook = 'none' | 'standard' | 'low';
 
@@ -22,6 +22,59 @@ export interface PreviewFrame {
     strip_url?: string | null;
     /** Face width (mm) the strip's height represents (informational; the rails use width_mm). */
     strip_face_mm?: number | null;
+}
+
+/**
+ * One frame layer for the previews (innermost first). With a split, 'top_bottom_sides' puts the
+ * primary moulding on the top & bottom rails and the second on the sides; 'halves' puts the primary
+ * on the top half and the second on the bottom half. The layer is as wide as its wider moulding.
+ */
+export interface PreviewLayer {
+    frame: PreviewFrame;
+    split?: { frame: PreviewFrame; mode: FrameSplitMode } | null;
+}
+
+/** Face width of a layer (mm): the wider of its mouldings. */
+export function layerWidth(layer: PreviewLayer): number {
+    return Math.max(layer.frame.width_mm, layer.split?.frame.width_mm ?? 0);
+}
+
+/** Total face width of all layers (mm); without layers, the single frame's. */
+export function framesWidth(frame: PreviewFrame | null, layers?: PreviewLayer[] | null): number {
+    return layers?.length ? layers.reduce((sum, l) => sum + layerWidth(l), 0) : (frame?.width_mm ?? 0);
+}
+
+/** A catalogue frame as the previews draw it. */
+export function previewFrame(frame: CatalogFrame): PreviewFrame {
+    return {
+        colour: frame.colour,
+        width_mm: frame.width_mm,
+        depth_mm: frame.depth_mm,
+        finish: frame.finish,
+        profile: frame.profile ?? (frame.is_floater ? 'floater' : 'flat'),
+        material: frame.material,
+        strip_url: frame.strip_url ?? null,
+        strip_face_mm: frame.strip_face_mm ?? null,
+    };
+}
+
+/** The line's frame layers (innermost first); a line with only frame_id is one plain layer. */
+export function frameLayersOf(ids: { frame_id: number | null; frame_layers?: FrameLayerInput[] | null }): FrameLayerInput[] {
+    if (ids.frame_layers?.length) return ids.frame_layers;
+    return ids.frame_id ? [{ frame_id: ids.frame_id, split: null }] : [];
+}
+
+/** Preview layers for the chosen frame layers (unknown frames are left out). */
+export function previewLayers(options: CatalogOptions, layers: FrameLayerInput[]): PreviewLayer[] {
+    const find = (id: number) => options.frames.find((f) => f.id === id);
+    const out: PreviewLayer[] = [];
+    for (const l of layers) {
+        const primary = find(l.frame_id);
+        if (!primary) continue;
+        const second = l.split ? find(l.split.frame_id) : undefined;
+        out.push({ frame: previewFrame(primary), split: second && l.split ? { frame: previewFrame(second), mode: l.split.mode } : null });
+    }
+    return out;
 }
 
 export interface PreviewMat {
@@ -62,26 +115,17 @@ export function previewParts(
         mat_border_mm: number | null;
         substrate_id: number | null;
         glazing_id?: number | null;
+        frame_layers?: FrameLayerInput[] | null;
     },
-): { frame: PreviewFrame | null; mat: PreviewMat | null; depthMm: number; glazing: GlazingLook } {
+): { frame: PreviewFrame | null; layers: PreviewLayer[]; mat: PreviewMat | null; depthMm: number; glazing: GlazingLook } {
     const frame = options.frames.find((f) => f.id === ids.frame_id) ?? null;
     const mat = options.mats.find((m) => m.id === ids.mat_id) ?? null;
     const substrate = options.substrates.find((s) => s.id === ids.substrate_id) ?? null;
     const glazing = options.glazings.find((g) => g.id === ids.glazing_id) ?? null;
 
     return {
-        frame: frame
-            ? {
-                  colour: frame.colour,
-                  width_mm: frame.width_mm,
-                  depth_mm: frame.depth_mm,
-                  finish: frame.finish,
-                  profile: frame.profile ?? (frame.is_floater ? 'floater' : 'flat'),
-                  material: frame.material,
-                  strip_url: frame.strip_url ?? null,
-                  strip_face_mm: frame.strip_face_mm ?? null,
-              }
-            : null,
+        frame: frame ? previewFrame(frame) : null,
+        layers: previewLayers(options, frameLayersOf(ids)),
         mat: mat
             ? {
                   colour: mat.colour,
@@ -96,10 +140,10 @@ export function previewParts(
     };
 }
 
-/** Outer size (mm) of the finished piece: picture + mat + frame. */
-export function outerSize(widthMm: number, heightMm: number, frame: PreviewFrame | null, mat: PreviewMat | null) {
+/** Outer size (mm) of the finished piece: picture + mat + frame (all layers, when stacked). */
+export function outerSize(widthMm: number, heightMm: number, frame: PreviewFrame | null, mat: PreviewMat | null, layers?: PreviewLayer[] | null) {
     const m = mat?.border_mm ?? 0;
-    const f = frame?.width_mm ?? 0;
+    const f = framesWidth(frame, layers);
     return {
         width: widthMm + 2 * m + 2 * f,
         height: heightMm + 2 * m + (mat?.bottom_weight_mm ?? 0) + 2 * f,
@@ -124,6 +168,8 @@ export interface WallPiece {
     widthMm: number;
     heightMm: number;
     frame: PreviewFrame | null;
+    /** Stacked / split frames, innermost first (when set, layers[0] is `frame`). */
+    layers?: PreviewLayer[];
     mat: PreviewMat | null;
     depthMm: number;
     edgeStyle: string | null;

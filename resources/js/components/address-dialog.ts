@@ -132,6 +132,8 @@ export class AddressDialog {
     readonly address = input<Address | null>(null);
     readonly states = input.required<Option<number>[]>();
     readonly defaultKind = input<'billing' | 'delivery'>('delivery');
+    /** Where a new address is posted (the enquiry editor saves it for the enquiry's customer). */
+    readonly storeUrl = input<string | null>(null);
     readonly saved = output<void>();
 
     protected form = new InertiaForm<AddressForm>(initial(null, 'delivery'));
@@ -164,6 +166,6 @@ export class AddressDialog {
             },
         };
         if (address) this.form.put(route('addresses.update', address.id), options);
-        else this.form.post(route('addresses.store'), options);
+        else this.form.post(this.storeUrl() ?? route('addresses.store'), options);
     }
 }

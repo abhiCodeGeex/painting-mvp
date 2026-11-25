@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Domain\Pricing\FrameLayers;
 use App\Enums\FrameFinish;
 use App\Models\EnquiryLine;
 use App\Models\Frame;
@@ -33,7 +34,15 @@ class FramedPreview
         FrameFinish|string|null $finish = null,
         int $depthMm = 0,
         int $rotation = 0,
+        // Stacked frames, innermost first: [{frame: Frame, split: null|{frame: Frame, mode}}]. Replaces $frame.
+        array $layers = [],
     ): array {
+        if ($layers) {
+            $frame = $layers[0]['frame'];
+            $frameWidthMm = self::layerWidth($layers[0]);
+        }
+        $outerLayers = array_slice($layers, 1);
+        $outerMm = array_sum(array_map(self::layerWidth(...), $outerLayers));
         $widthMm = max(1, $widthMm);
         $heightMm = max(1, $heightMm);
 
@@ -50,14 +59,16 @@ class FramedPreview
         $matBorderMm = $mat ? ($matBorderMm ?? $mat->default_border_mm) : 0;
         $matBottomExtra = $mat?->bottom_weight_mm ?? 0;
 
-        $outerW = $widthMm + 2 * $matBorderMm + 2 * ($frameColour ? $frameWidthMm : 0);
-        $outerH = $heightMm + 2 * $matBorderMm + $matBottomExtra + 2 * ($frameColour ? $frameWidthMm : 0);
+        $outerW = $widthMm + 2 * $matBorderMm + 2 * ($frameColour ? $frameWidthMm : 0) + 2 * $outerMm;
+        $outerH = $heightMm + 2 * $matBorderMm + $matBottomExtra + 2 * ($frameColour ? $frameWidthMm : 0) + 2 * $outerMm;
         $scale = $maxPx / max($outerW, $outerH);
 
         $px = fn (float $mm, int $min = 0): string => max($min, round($mm * $scale, 1)).'px';
 
         $frameStyle = '';
-        if ($frameColour) {
+        if ($layers) {
+            $frameStyle = self::layerStyle($layers[0], $px, count($layers) === 1);
+        } elseif ($frameColour) {
             $frameStyle = sprintf(
                 'display:inline-block;padding:%s;background:%s;box-shadow:%s;',
                 $px($frameWidthMm, 2),
@@ -90,6 +101,9 @@ class FramedPreview
                 ? "display:flex;align-items:center;justify-content:center;padding:24px;border-radius:8px;background:{$wallColour};"
                 : 'display:inline-flex;align-items:center;justify-content:center;',
             'frameStyle' => $frameStyle,
+            // Frames around the inner one, outermost first (the Blade nests them around frameStyle).
+            'outerFrameStyles' => array_reverse(array_map(
+                fn (array $l, int $i) => self::layerStyle($l, $px, $i === count($outerLayers) - 1), $outerLayers, array_keys($outerLayers))),
             'matStyle' => $matStyle,
             'imageStyle' => $imageStyle,
             'imageInnerStyle' => $imageInnerStyle,
@@ -116,7 +130,61 @@ class FramedPreview
             maxPx: $maxPx,
             depthMm: $line->frame ? 0 : (int) $line->substrate?->depth_mm,
             rotation: (int) $line->image_rotation,
+            layers: self::lineLayers($line),
         );
+    }
+
+    /**
+     * The line's frame layers with their mouldings (innermost first).
+     *
+     * @return list<array{frame: Frame, split: array{frame: Frame, mode: string}|null}>
+     */
+    private static function lineLayers(EnquiryLine $line): array
+    {
+        $layers = $line->frameLayers();
+        $frames = Frame::withTrashed()->whereIn('id', FrameLayers::frameIds($layers))->get()->keyBy('id');
+        $out = [];
+        foreach ($layers as $layer) {
+            if ($primary = $frames->get($layer['frame_id'])) {
+                $second = $layer['split'] ? $frames->get($layer['split']['frame_id']) : null;
+                $out[] = ['frame' => $primary, 'split' => $second ? ['frame' => $second, 'mode' => $layer['split']['mode']] : null];
+            }
+        }
+
+        return $out;
+    }
+
+    /** A split layer is as wide as its wider moulding. */
+    private static function layerWidth(array $layer): int
+    {
+        return max((int) $layer['frame']->profile_width_mm, (int) ($layer['split']['frame']->profile_width_mm ?? 0));
+    }
+
+    /**
+     * One frame layer. Split "top & bottom / sides": CSS borders, which meet on mitred diagonals.
+     * Split "halves": the top half in the primary moulding, the bottom half in the second.
+     */
+    private static function layerStyle(array $layer, \Closure $px, bool $outermost): string
+    {
+        $primary = $layer['frame'];
+        $split = $layer['split'];
+        $width = self::layerWidth($layer);
+        $shadow = 'inset 0 0 0 1px rgba(0,0,0,.25), inset 2px 2px 3px rgba(255,255,255,.25), inset -2px -2px 3px rgba(0,0,0,.3)'
+            .($outermost ? ', 0 6px 14px rgba(0,0,0,.35)' : '');
+        $p = $primary->colour_hex;
+
+        if ($split && $split['mode'] === FrameLayers::SPLIT_TOP_BOTTOM_SIDES) {
+            $s = $split['frame']->colour_hex;
+
+            return sprintf('display:inline-flex;border-style:solid;border-width:%s;border-color:%s %s %s %s;box-shadow:%s;',
+                $px($width, 2), $p, $s, $p, $s, $shadow);
+        }
+
+        $background = $split
+            ? "linear-gradient(to bottom, {$p} 50%, {$split['frame']->colour_hex} 50%)"
+            : self::frameBackground($p, $primary->finish);
+
+        return sprintf('display:inline-flex;padding:%s;background:%s;box-shadow:%s;', $px($width, 2), $background, $shadow);
     }
 
     private static function frameBackground(string $colour, ?FrameFinish $finish): string

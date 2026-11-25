@@ -51,7 +51,23 @@
                 {!! $row('Medium', $line->medium?->name) !!}
                 {!! $row('Substrate', $line->substrate?->name) !!}
                 {!! $row('Edges', $line->edge_style?->getLabel()) !!}
-                {!! $row('Frame', $line->frame ? $line->frame->name.' ('.$line->frame->code.')' : ($line->frame_advice_requested ? 'Customer wants our advice' : 'No frame')) !!}
+                @php
+                    // Every frame layer (innermost first), with its split moulding if any.
+                    $layers = $line->frameLayers();
+                    $layerFrames = \App\Models\Frame::withTrashed()->whereIn('id', \App\Domain\Pricing\FrameLayers::frameIds($layers))->get()->keyBy('id');
+                    $frameName = fn (int $id) => ($f = $layerFrames->get($id)) ? $f->name.' ('.$f->code.')' : 'Frame #'.$id;
+                @endphp
+                @if (count($layers) > 1 || ($layers[0]['split'] ?? null))
+                    @foreach ($layers as $n => $layer)
+                        {!! $row($n === 0 ? 'Frame 1 (inner)' : 'Frame '.($n + 1).' (around '.$n.')',
+                            $frameName($layer['frame_id']).($layer['split']
+                                ? ' · split '.\App\Domain\Pricing\FrameLayers::modeLabel($layer['split']['mode']).': '
+                                    .($layer['split']['mode'] === 'halves' ? 'bottom half ' : 'sides ').$frameName($layer['split']['frame_id'])
+                                : '')) !!}
+                    @endforeach
+                @else
+                    {!! $row('Frame', $line->frame ? $line->frame->name.' ('.$line->frame->code.')' : ($line->frame_advice_requested ? 'Customer wants our advice' : 'No frame')) !!}
+                @endif
                 {!! $row('Mat', $line->mat ? $line->mat->name.' — '.($line->mat_border_mm ?? $line->mat->default_border_mm).' mm border' : null) !!}
                 {!! $row('Glazing', $line->glazing?->name) !!}
                 {!! $row('Finishing', $line->finishings->pluck('name')->implode(', ')) !!}

@@ -2,8 +2,8 @@
 
 namespace App\Filament\Resources\Inventory\StockMovements;
 
-use App\Filament\Resources\Inventory\StockItems\StockItemResource;
 use App\Filament\Resources\Inventory\StockMovements\Pages\ListStockMovements;
+use App\Filament\Support\StockColumns;
 use App\Models\Frame;
 use App\Models\Mat;
 use App\Models\StockItem;
@@ -11,6 +11,7 @@ use App\Models\StockMovement;
 use App\Models\User;
 use App\Providers\Filament\AdminPanelProvider;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
@@ -22,7 +23,8 @@ use Illuminate\Database\Eloquent\Builder;
 use UnitEnum;
 
 /**
- * Read-only log of every stock change (received, used, counted) across all items.
+ * Stock history: read-only log of every stock change (refilled, reduced, counted) across all
+ * items. Stock itself is managed in each item's own listing (frames, mats, glazing, substrates).
  */
 class StockMovementResource extends Resource
 {
@@ -32,18 +34,20 @@ class StockMovementResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = AdminPanelProvider::GROUP_INVENTORY;
 
-    protected static ?string $navigationLabel = 'Stock movements';
+    protected static ?string $navigationLabel = 'Stock history';
+
+    protected static ?string $modelLabel = 'stock movement';
 
     protected static ?string $slug = 'inventory/movements';
 
-    protected static ?int $navigationSort = 20;
+    protected static ?int $navigationSort = 10;
 
     /**
      * Anyone who may see the stock may see how it changed.
      */
     public static function canViewAny(): bool
     {
-        return StockItemResource::canViewAny();
+        return StockColumns::canView();
     }
 
     public static function canCreate(): bool
@@ -78,6 +82,14 @@ class StockMovementResource extends Resource
                 TextColumn::make('note')->placeholder('—')->wrap()->searchable(),
                 TextColumn::make('user.name')->label('By')->placeholder('System'),
             ])
+            ->recordActions([
+                Action::make('openItem')
+                    ->label('Open item')
+                    ->icon('heroicon-m-arrow-top-right-on-square')
+                    ->color('gray')
+                    ->visible(fn (StockMovement $record): bool => $record->stockItem?->stockable !== null)
+                    ->url(fn (StockMovement $record): ?string => $record->stockItem ? StockColumns::listingUrl($record->stockItem, null) : null),
+            ])
             ->filters([
                 SelectFilter::make('direction')
                     ->label('Direction')
@@ -107,7 +119,7 @@ class StockMovementResource extends Resource
                         ->when($data['until'] ?? null, fn (Builder $q, $date) => $q->whereDate('created_at', '<=', $date))),
             ])
             ->emptyStateHeading('No stock movements yet')
-            ->emptyStateDescription('Every "Adjust stock" in the inventory is logged here.');
+            ->emptyStateDescription('Every Refill / Reduce from the frame, mat, glazing and substrate lists is logged here.');
     }
 
     private static function searchItem(Builder $query, string $search): Builder

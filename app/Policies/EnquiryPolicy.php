@@ -36,6 +36,19 @@ class EnquiryPolicy
         return $user->isStaff() && $user->can('Update:Enquiry');
     }
 
+    /**
+     * Use the enquiry editor (project details, artworks, delivery address): customers on
+     * their own drafts, active staff with update permission on enquiries not yet quoted.
+     */
+    public function edit(User $user, Enquiry $enquiry): bool
+    {
+        if ($this->owns($user, $enquiry)) {
+            return $enquiry->isEditableByCustomer();
+        }
+
+        return $user->isStaff() && $user->is_active && $user->can('Update:Enquiry') && $enquiry->isEditableByStaff();
+    }
+
     public function message(User $user, Enquiry $enquiry): bool
     {
         return $enquiry->status->isOpen()

@@ -12,24 +12,52 @@ class QuoteLine extends Model
 {
     protected $guarded = ['id'];
 
-    protected $attributes = ['discount_amount' => 0, 'is_optional' => false, 'is_selected' => true];
+    protected $attributes = ['discount_amount' => 0, 'labour_amount' => 0, 'is_optional' => false, 'is_selected' => true];
 
     protected static function booted(): void
     {
         static::saving(function (QuoteLine $line): void {
             $line->discount_amount ??= 0;
+            $line->labour_amount ??= 0;
             $line->unit_price ??= 0;
         });
+    }
+
+    /**
+     * The artist chosen for a new creation: their fee per m² prices the artwork.
+     *
+     * @return BelongsTo<Artist, $this>
+     */
+    public function artist(): BelongsTo
+    {
+        return $this->belongsTo(Artist::class);
+    }
+
+    /**
+     * Work after the artwork on this line (cutting, mounting, installation…), per piece, in paise.
+     *
+     * @param  array<int|string, mixed>|null  $items
+     */
+    public static function workTotalOf(?array $items): int
+    {
+        return (int) collect($items ?? [])->sum(fn ($i) => max(0, (int) ($i['amount'] ?? 0)));
+    }
+
+    public function workTotal(): int
+    {
+        return self::workTotalOf($this->work_items);
     }
 
     protected function casts(): array
     {
         return [
             'breakdown' => 'array',
+            'work_items' => 'array',
             'is_optional' => 'boolean',
             'is_selected' => 'boolean',
             'quantity' => 'integer',
             'unit_cost' => 'integer',
+            'labour_amount' => 'integer',
             'calculated_unit_price' => 'integer',
             'unit_price' => 'integer',
             'discount_amount' => 'integer',

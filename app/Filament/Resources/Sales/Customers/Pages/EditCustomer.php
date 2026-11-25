@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Sales\Customers\Pages;
 
 use App\Domain\Customers\CustomerAccounts;
 use App\Filament\Resources\Sales\Customers\CustomerResource;
+use App\Filament\Resources\Sales\Enquiries\Actions\RaiseEnquiryAction;
 use App\Models\Customer;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
@@ -20,6 +21,9 @@ class EditCustomer extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            RaiseEnquiryAction::make(fn (): ?Customer => $this->record instanceof Customer && ! $this->record->trashed() ? $this->record : null)
+                ->modalHeading(fn (): string => 'New enquiry for '.$this->record->displayName())
+                ->visible(fn (): bool => RaiseEnquiryAction::allowed() && ! $this->record->trashed()),
             Action::make('sendPasswordLink')
                 ->label('Send password link')
                 ->icon('heroicon-o-key')

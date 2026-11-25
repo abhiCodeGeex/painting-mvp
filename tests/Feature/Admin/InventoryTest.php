@@ -3,11 +3,15 @@
 use App\Enums\Role;
 use App\Enums\StockStatus;
 use App\Enums\StockUnit;
+use App\Filament\Resources\Catalog\Substrates\Pages\ManageSubstrates;
+use App\Filament\Resources\Framing\Frames\FrameResource;
+use App\Filament\Resources\Framing\Frames\Pages\ListFrames;
+use App\Filament\Resources\Framing\Glazings\Pages\ManageGlazings;
 use App\Filament\Resources\Framing\Mats\MatResource;
-use App\Filament\Resources\Inventory\StockItems\Pages\ManageStockItems;
-use App\Filament\Resources\Inventory\StockItems\StockItemResource;
+use App\Filament\Resources\Framing\Mats\Pages\ManageMats;
 use App\Filament\Resources\Inventory\StockMovements\Pages\ListStockMovements;
 use App\Filament\Resources\Inventory\StockMovements\StockMovementResource;
+use App\Filament\Support\StockColumns;
 use App\Filament\Widgets\LowStockItems;
 use App\Filament\Widgets\StockOverview;
 use App\Models\Frame;
@@ -24,6 +28,7 @@ use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use Spatie\Permission\Models\Permission;
 
 beforeEach(function () {
     Notification::fake();
@@ -111,45 +116,152 @@ test('raising the alert level above the stock also alerts', function () {
     Notification::assertSentToTimes($this->admin, LowStockAlert::class, 1);
 });
 
-test('the inventory lists stock with filters and an adjust action', function () {
+test('there is no separate Stock menu: only the stock history', function () {
+    expect(class_exists('App\\Filament\\Resources\\Inventory\\StockItems\\StockItemResource'))->toBeFalse();
+
+    $labels = collect(Filament::getPanel('admin')->getNavigation())
+        ->flatMap(fn ($group) => $group->getItems())
+        ->map(fn ($item) => $item->getLabel())
+        ->all();
+
+    expect($labels)->toContain('Stock history')
+        ->not->toContain('Stock')
+        ->not->toContain('Stock movements');
+
+    $this->get('/admin/inventory/stock')->assertNotFound();
+});
+
+test('item listings show stock, tint low rows and filter by stock status', function () {
     $this->seed(DemoStockSeeder::class);
     Notification::assertNothingSent(); // seeding does not alert
 
-    $gold = stockFor(Frame::class, 'FR-GLD-40');   // out
-    $oak = stockFor(Frame::class, 'FR-OAK-25');    // low
-    $black = stockFor(Frame::class, 'FR-BLK-20');  // ok
+    $gold = Frame::where('code', 'FR-GLD-40')->firstOrFail();   // out
+    $oak = Frame::where('code', 'FR-OAK-25')->firstOrFail();    // low
+    $black = Frame::where('code', 'FR-BLK-20')->firstOrFail();  // ok
 
-    $this->get(StockItemResource::getUrl('index'))
+    $this->get(FrameResource::getUrl('index'))
         ->assertOk()
         ->assertSee('Antique gold ornate 40 mm')
+        ->assertSee('Out of stock')
         ->assertSee('stock-row-out')
         ->assertSee('stock-row-low');
 
-    Livewire::test(ManageStockItems::class)
-        ->filterTable('status', StockStatus::Low->value)
+    Livewire::test(ListFrames::class)
+        ->assertTableColumnExists('stock_on_hand')
+        ->assertTableColumnExists('stock_status')
+        ->filterTable('stock', StockStatus::Low->value)
         ->assertCanSeeTableRecords([$oak])
         ->assertCanNotSeeTableRecords([$gold, $black])
-        ->filterTable('status', StockStatus::Out->value)
+        ->filterTable('stock', StockColumns::ATTENTION)
+        ->assertCanSeeTableRecords([$gold, $oak])
+        ->assertCanNotSeeTableRecords([$black])
+        ->filterTable('stock', StockStatus::Out->value)
         ->assertCanSeeTableRecords([$gold])
         ->assertCanNotSeeTableRecords([$oak, $black]);
-
-    Livewire::test(ManageStockItems::class)
-        ->callTableAction('adjustStock', $gold, data: ['direction' => 'add', 'quantity' => 60, 'note' => 'Supplier delivery'])
-        ->assertHasNoTableActionErrors();
-
-    expect($gold->fresh()->quantity)->toBe(60.0)
-        ->and($gold->movements()->first()->note)->toBe('Supplier delivery')
-        ->and($gold->movements()->first()->user_id)->toBe($this->admin->id);
-
-    expect(StockItemResource::getNavigationBadge())->not->toBeNull();
 });
 
-test('archived items drop out of the inventory', function () {
+test('refill and reduce from an item listing record stock movements', function () {
+    $gold = Frame::where('code', 'FR-GLD-40')->firstOrFail();
+    $stock = $gold->stockItem;
+
+    Livewire::test(ListFrames::class)
+        ->callTableAction('refillStock', $gold, data: ['quantity' => 60, 'note' => 'Supplier delivery'])
+        ->assertHasNoTableActionErrors();
+
+    expect($stock->fresh()->quantity)->toBe(60.0)
+        ->and($stock->movements()->first()->note)->toBe('Supplier delivery')
+        ->and($stock->movements()->first()->change)->toBe(60.0)
+        ->and($stock->movements()->first()->user_id)->toBe($this->admin->id);
+
+    Livewire::test(ListFrames::class)
+        ->callTableAction('reduceStock', $gold, data: ['quantity' => 45.5, 'reason' => 'Used on job'])
+        ->assertHasNoTableActionErrors();
+
+    expect($stock->fresh()->quantity)->toBe(14.5)
+        ->and($stock->movements()->count())->toBe(2)
+        ->and($stock->movements()->first()->change)->toBe(-45.5)
+        ->and($stock->movements()->first()->note)->toBe('Used on job');
+
+    // Dropped under the alert level (20): admins alerted once, linking to the frame list.
+    Notification::assertSentToTimes($this->admin, LowStockAlert::class, 1);
+    Notification::assertSentTo($this->admin, LowStockAlert::class, fn (LowStockAlert $n) => str_starts_with((string) $n->listingUrl, FrameResource::getUrl('index')));
+
+    // A reason is required, and you cannot remove more than is in stock.
+    Livewire::test(ListFrames::class)
+        ->callTableAction('reduceStock', $gold, data: ['quantity' => 5, 'reason' => ''])
+        ->assertHasTableActionErrors(['reason' => 'required']);
+    Livewire::test(ListFrames::class)
+        ->callTableAction('reduceStock', $gold, data: ['quantity' => 15, 'reason' => 'Used'])
+        ->assertHasTableActionErrors(['quantity']);
+
+    expect($stock->fresh()->quantity)->toBe(14.5)
+        ->and($stock->movements()->count())->toBe(2);
+});
+
+test('every stock-tracked listing has the stock actions', function () {
+    $mat = Mat::where('code', 'MAT-WHT')->firstOrFail();
+    $glazing = Glazing::where('name', 'Clear acrylic 3 mm')->firstOrFail();
+    $none = Glazing::where('name', 'No glazing')->firstOrFail();
+    $substrate = Substrate::where('name', 'Canvas roll (unstretched)')->firstOrFail();
+
+    Livewire::test(ManageMats::class)
+        ->callTableAction('refillStock', $mat, data: ['quantity' => 12])
+        ->assertHasNoTableActionErrors();
+    expect($mat->stockItem->fresh()->quantity)->toBe(12.0)
+        ->and($mat->stockItem->movements()->first()->note)->toBe('Refilled');
+
+    // Sheets are whole pieces.
+    Livewire::test(ManageMats::class)
+        ->callTableAction('reduceStock', $mat, data: ['quantity' => 1.5, 'reason' => 'Damaged'])
+        ->assertHasTableActionErrors(['quantity']);
+
+    Livewire::test(ManageGlazings::class)
+        ->assertTableActionVisible('refillStock', $glazing)
+        ->assertTableActionHidden('refillStock', $none) // "No glazing" holds no stock
+        ->callTableAction('refillStock', $glazing, data: ['quantity' => 3]);
+    expect($glazing->stockItem->fresh()->quantity)->toBe(3.0);
+
+    Livewire::test(ManageSubstrates::class)
+        ->callTableAction('refillStock', $substrate, data: ['quantity' => 2, 'note' => 'Delivery'])
+        ->callTableAction('stockAlertLevel', $substrate, data: ['low_stock_threshold' => 1]);
+    expect($substrate->stockItem->fresh()->quantity)->toBe(2.0)
+        ->and($substrate->stockItem->fresh()->low_stock_threshold)->toBe(1.0)
+        ->and($substrate->stockItem->fresh()->status())->toBe(StockStatus::Ok);
+});
+
+test('staff without stock permission do not get the stock actions', function () {
+    foreach (['ViewAny:Mat', 'ViewAny:StockItem', 'Update:StockItem'] as $name) {
+        Permission::findOrCreate($name, 'web');
+    }
+    $mat = Mat::where('code', 'MAT-WHT')->firstOrFail();
+
+    $viewer = User::factory()->staff()->create();
+    $viewer->givePermissionTo(['ViewAny:Mat', 'ViewAny:StockItem']);
+    $this->actingAs($viewer);
+
+    Livewire::test(ManageMats::class)
+        ->assertTableColumnVisible('stock_on_hand')
+        ->assertTableActionHidden('refillStock', $mat)
+        ->assertTableActionHidden('reduceStock', $mat)
+        ->assertTableActionHidden('stockAlertLevel', $mat)
+        ->assertTableBulkActionHidden('bulkStockAlertLevel');
+
+    $blind = User::factory()->staff()->create();
+    $blind->givePermissionTo(['ViewAny:Mat']);
+    $this->actingAs($blind);
+
+    Livewire::test(ManageMats::class)
+        ->assertTableColumnHidden('stock_on_hand')
+        ->assertTableActionHidden('refillStock', $mat);
+    $this->get('/admin/inventory/movements')->assertForbidden();
+});
+
+test('archived items drop out of the restock list', function () {
     $mat = Mat::where('code', 'MAT-GRY')->firstOrFail();
     $stock = $mat->stockItem;
     $mat->delete();
 
-    Livewire::test(ManageStockItems::class)->assertCanNotSeeTableRecords([$stock]);
+    Livewire::test(LowStockItems::class)->assertCanNotSeeTableRecords([$stock]);
 });
 
 test('the dashboard shows stock warnings and the restock list', function () {
@@ -168,7 +280,17 @@ test('the dashboard shows stock warnings and the restock list', function () {
 
     Livewire::test(LowStockItems::class)
         ->assertCanSeeTableRecords([stockFor(Frame::class, 'FR-GLD-40'), stockFor(Mat::class, 'MAT-BLK')])
-        ->assertCanNotSeeTableRecords([stockFor(Frame::class, 'FR-BLK-20')]);
+        ->assertCanNotSeeTableRecords([stockFor(Frame::class, 'FR-BLK-20')])
+        ->callTableAction('refillStock', stockFor(Frame::class, 'FR-GLD-40'), data: ['quantity' => 5, 'note' => 'Delivery']);
+
+    expect(stockFor(Frame::class, 'FR-GLD-40')->quantity)->toBe(5.0);
+
+    // Warnings link to the item's own list, filtered, not to a separate Stock page.
+    expect(StockColumns::listingUrl(stockFor(Frame::class, 'FR-GLD-40')))
+        ->toStartWith(FrameResource::getUrl('index'))
+        ->toContain('search=')
+        ->toContain('filters');
+    expect(StockColumns::listingUrl(stockFor(Mat::class, 'MAT-BLK')))->toStartWith(MatResource::getUrl('index'));
 });
 
 test('item lists show the stock column', function () {
@@ -223,18 +345,13 @@ test('the movements log lists every change and filters by direction', function (
         ->assertCanSeeTableRecords([$out]);
 });
 
-test('alert level can be set on several items at once, and the list downloads as CSV', function () {
-    $mats = StockItem::where('stockable_type', Mat::class)->get();
-    $mats->each->adjust(10);
+test('alert level can be set on several items at once from a listing', function () {
+    $mats = Mat::with('stockItem')->get();
+    $mats->each(fn (Mat $mat) => $mat->stockItem->adjust(10));
 
-    Livewire::test(ManageStockItems::class)
-        ->callTableBulkAction('bulkThreshold', $mats, data: ['low_stock_threshold' => 5]);
+    Livewire::test(ManageMats::class)
+        ->callTableBulkAction('bulkStockAlertLevel', $mats, data: ['low_stock_threshold' => 5]);
 
     expect(StockItem::where('stockable_type', Mat::class)->pluck('low_stock_threshold')->unique()->all())->toBe([5.0])
         ->and(StockItem::where('stockable_type', Mat::class)->get()->every(fn ($i) => $i->status() === StockStatus::Ok))->toBeTrue();
-
-    Livewire::test(ManageStockItems::class)
-        ->filterTable('stockable_type', Mat::class)
-        ->callAction('exportCsv')
-        ->assertFileDownloaded('stock-'.now()->format('Y-m-d').'.csv');
 });

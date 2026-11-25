@@ -44,6 +44,14 @@ class ViewEnquiry extends ViewRecord
     protected function getHeaderActions(): array
     {
         return [
+            // Same editor the customer uses (artwork options, previews, pricing), opened for staff.
+            Action::make('openEditor')
+                ->label(fn (): string => $this->enquiry()->status === EnquiryStatus::Draft ? 'Continue in editor' : 'Edit artworks')
+                ->icon('heroicon-o-pencil-square')
+                ->color('gray')
+                ->visible(fn (): bool => $this->enquiry()->isEditableBy(auth()->user()))
+                ->url(fn (): string => route('portal.enquiries.edit', $this->enquiry())),
+
             Action::make('createQuote')
                 ->label(fn (): string => $this->enquiry()->quotes()->exists() ? 'Revise quote' : 'Create quote')
                 ->icon('heroicon-o-document-currency-rupee')

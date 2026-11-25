@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { PreviewFrame, PreviewMat } from '../preview-helpers';
-import { buildMoulding } from './moulding';
+import { layerWidth, type PreviewFrame, type PreviewLayer, type PreviewMat } from '../preview-helpers';
+import { buildMoulding, splitParts } from './moulding';
 
 /* Builders for the 3D room, ported 1:1 from the React Three Fiber components. All sizes in metres. */
 
@@ -221,6 +221,8 @@ export function buildArtwork(
     d: ArtDims,
     opts: {
         frame: PreviewFrame | null;
+        /** Stacked / split frames, innermost first (layers[0] is `frame`); d.frameW is all of them together. */
+        layers?: PreviewLayer[];
         mat: PreviewMat | null;
         glazing: 'none' | 'standard' | 'low';
         depthMm: number;
@@ -330,7 +332,24 @@ export function buildArtwork(
     // ---- frame ----
     if (frame) {
         // The real moulding shape (flat, rounded, scoop, stepped, ornate or floater), mitred at the corners.
-        group.add(buildMoulding(d.outerW - 2 * d.frameW, d.outerH - 2 * d.frameW, d.frameW, frameDepth, frame));
+        // Stacked frames: each layer is built around the outside of the one inside it. A split layer is
+        // two mouldings, each on its own rails (or half rails), both as wide as the wider one.
+        const layers: PreviewLayer[] = opts.layers?.length ? opts.layers : [{ frame, split: null }];
+        let openW = d.outerW - 2 * d.frameW;
+        let openH = d.outerH - 2 * d.frameW;
+        layers.forEach((layer, i) => {
+            const faceW = i === 0 && layers.length === 1 ? d.frameW : M(layerWidth(layer));
+            const depthOf = (f: PreviewFrame) => M(Math.max(15, f.depth_mm ?? 25));
+            if (layer.split) {
+                const parts = splitParts(layer.split.mode);
+                group.add(buildMoulding(openW, openH, faceW, depthOf(layer.frame), layer.frame, parts.primary));
+                group.add(buildMoulding(openW, openH, faceW, depthOf(layer.split.frame), layer.split.frame, parts.second));
+            } else {
+                group.add(buildMoulding(openW, openH, faceW, depthOf(layer.frame), layer.frame));
+            }
+            openW += 2 * faceW;
+            openH += 2 * faceW;
+        });
 
         // glass
         if (glazing !== 'none') {

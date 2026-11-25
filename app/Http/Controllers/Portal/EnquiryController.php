@@ -9,19 +9,21 @@ use App\Enums\BudgetRange;
 use App\Enums\EnquiryStatus;
 use App\Enums\PreferredContact;
 use App\Enums\ProjectType;
+use App\Filament\Resources\Sales\Enquiries\EnquiryResource;
 use App\Http\Presenters\CatalogOptions;
 use App\Http\Presenters\EnquiryPresenter;
 use App\Models\Enquiry;
-use App\Models\EnquirySource;
 use App\Models\Message;
 use App\Models\Quote;
 use App\Models\RejectionReason;
+use Filament\Notifications\Notification;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class EnquiryController extends PortalController
 {
@@ -46,21 +48,20 @@ class EnquiryController extends PortalController
     public function store(Request $request): RedirectResponse
     {
         $this->authorize('create', Enquiry::class);
-        $customer = $this->customer($request);
-
-        $enquiry = $customer->enquiries()->create([
-            'project_name' => 'My artwork project',
-            'source_id' => $customer->source_id ?? EnquirySource::where('name', 'Website')->value('id'),
-            'delivery_address_id' => $customer->addresses()->where('kind', AddressKind::Delivery)->orderByDesc('is_default')->value('id'),
-        ]);
+        $enquiry = $this->workflow->createDraft($this->customer($request));
 
         return to_route('portal.enquiries.edit', $enquiry)
             ->with('success', 'Draft created. Add your artworks, then press “Send enquiry” on the Review & send step to send it to us.');
     }
 
-    public function show(Request $request, Enquiry $enquiry): Response|RedirectResponse
+    public function show(Request $request, Enquiry $enquiry): Response|SymfonyResponse
     {
         $this->authorize('view', $enquiry);
+
+        // Staff read enquiries in the admin panel; the portal is only their editor.
+        if ($request->user()->isStaff()) {
+            return Inertia::location(self::adminUrl($enquiry));
+        }
 
         if ($enquiry->isEditableByCustomer()) {
             return to_route('portal.enquiries.edit', $enquiry);
@@ -78,17 +79,33 @@ class EnquiryController extends PortalController
         ]);
     }
 
-    public function edit(Request $request, Enquiry $enquiry): Response|RedirectResponse
+    public function edit(Request $request, Enquiry $enquiry): Response|SymfonyResponse
     {
         $this->authorize('view', $enquiry);
+        $user = $request->user();
 
-        if (! $enquiry->isEditableByCustomer()) {
+        if (! $enquiry->isEditableBy($user)) {
+            if ($user->isStaff()) {
+                self::notifyStaff('This enquiry can no longer be changed in the editor.', 'warning');
+
+                return Inertia::location(self::adminUrl($enquiry));
+            }
+
             return to_route('portal.enquiries.show', $enquiry);
         }
 
-        $customer = $this->customer($request);
+        // Always the enquiry's own customer: staff may be editing it on their behalf.
+        $customer = $enquiry->customer;
 
         return Inertia::render('enquiries/edit', [
+            'staff' => $user->isStaff() ? [
+                'customer_name' => $customer->displayName(),
+                'customer_email' => $customer->user?->email,
+                'admin_url' => self::adminUrl($enquiry),
+                'admin_list_url' => EnquiryResource::getUrl('index', panel: 'admin'),
+                'is_draft' => $enquiry->status === EnquiryStatus::Draft,
+                'status_label' => $enquiry->status->getLabel(),
+            ] : null,
             'enquiry' => EnquiryPresenter::detail($enquiry),
             'estimate' => app(CustomerEstimate::class)->forEnquiry($enquiry),
             'options' => CatalogOptions::forEditor(),
@@ -103,7 +120,7 @@ class EnquiryController extends PortalController
      */
     public function update(Request $request, Enquiry $enquiry): RedirectResponse
     {
-        $this->authorize('update', $enquiry);
+        $this->authorizeEditor($request, $enquiry);
 
         $data = $request->validate([
             'project_name' => ['required', 'string', 'max:255'],
@@ -123,11 +140,17 @@ class EnquiryController extends PortalController
         return back()->with('success', 'Saved.');
     }
 
-    public function submit(Request $request, Enquiry $enquiry): RedirectResponse
+    public function submit(Request $request, Enquiry $enquiry): SymfonyResponse
     {
-        $this->authorize('update', $enquiry);
+        $this->authorizeEditor($request, $enquiry);
 
         $this->workflow->submit($enquiry, $request->user());
+
+        if ($request->user()->isStaff()) {
+            self::notifyStaff('Enquiry sent on behalf of the customer. They get the usual confirmation email.');
+
+            return Inertia::location(self::adminUrl($enquiry));
+        }
 
         return to_route('portal.enquiries.show', $enquiry)->with('success', 'Thank you! Your enquiry has been sent. We will be in touch soon.');
     }
@@ -145,13 +168,31 @@ class EnquiryController extends PortalController
     /**
      * Drafts can be thrown away completely.
      */
-    public function destroy(Request $request, Enquiry $enquiry): RedirectResponse
+    public function destroy(Request $request, Enquiry $enquiry): SymfonyResponse
     {
-        $this->authorize('update', $enquiry);
+        $this->authorizeEditor($request, $enquiry);
         abort_unless($enquiry->status === EnquiryStatus::Draft, 403);
 
         $enquiry->delete();
 
+        if ($request->user()->isStaff()) {
+            self::notifyStaff('Draft deleted.');
+
+            return Inertia::location(EnquiryResource::getUrl('index', panel: 'admin'));
+        }
+
         return to_route('portal.enquiries.index')->with('success', 'Draft deleted.');
+    }
+
+    /** A notice shown on the admin page staff return to. */
+    private static function notifyStaff(string $title, string $status = 'success'): void
+    {
+        Notification::make()->title($title)->status($status)->send();
+    }
+
+    /** The enquiry's screen in the admin panel (where staff come from and go back to). */
+    public static function adminUrl(Enquiry $enquiry): string
+    {
+        return EnquiryResource::getUrl('view', ['record' => $enquiry], panel: 'admin');
     }
 }

@@ -137,6 +137,25 @@ class Enquiry extends Model implements HasMedia
         return $this->status === EnquiryStatus::Draft;
     }
 
+    /**
+     * Staff can open the enquiry editor on drafts (raised for a customer) and on enquiries
+     * still waiting for a quote, to adjust artworks on the customer's behalf.
+     */
+    public function isEditableByStaff(): bool
+    {
+        return in_array($this->status, [EnquiryStatus::Draft, EnquiryStatus::Submitted, EnquiryStatus::UnderReview, EnquiryStatus::NeedsClarification], true);
+    }
+
+    /**
+     * Whether this user may change the enquiry in the editor now. The status is checked here as
+     * well as in the policy, because Shield lets admins pass every policy check.
+     */
+    public function isEditableBy(User $user): bool
+    {
+        return $user->can('edit', $this)
+            && ($user->isStaff() ? $this->isEditableByStaff() : $this->isEditableByCustomer());
+    }
+
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()

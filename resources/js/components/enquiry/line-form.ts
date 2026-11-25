@@ -1,6 +1,6 @@
 import type { Unit } from '@/lib/units';
-import type { CatalogOptions, EnquiryLine, LineSourceType } from '@/types/portal';
-import { WALL_COLOURS } from './preview-helpers';
+import type { CatalogOptions, EnquiryLine, FrameLayerInput, LineSourceType } from '@/types/portal';
+import { frameLayersOf, WALL_COLOURS } from './preview-helpers';
 
 export type LineForm = {
     source_type: LineSourceType;
@@ -25,6 +25,8 @@ export type LineForm = {
     substrate_id: number | null;
     edge_style: string | null;
     frame_id: number | null;
+    /** Frame layers, innermost first; layers[0].frame_id is always frame_id. Empty without a frame. */
+    frame_layers: FrameLayerInput[];
     frame_advice_requested: boolean;
     mat_id: number | null;
     mat_border_mm: number | null;
@@ -73,6 +75,7 @@ export function initialLineForm(line: EnquiryLine | null, options: CatalogOption
         substrate_id: line ? line.substrate_id : (standardTier?.default_substrate_id ?? null),
         edge_style: line?.edge_style ?? null,
         frame_id: line?.frame_id ?? null,
+        frame_layers: line ? frameLayersOf(line).map((l) => ({ frame_id: l.frame_id, split: l.split ? { ...l.split } : null })) : [],
         frame_advice_requested: line?.frame_advice_requested ?? false,
         mat_id: line?.mat_id ?? null,
         mat_border_mm: line?.mat_border_mm ?? null,

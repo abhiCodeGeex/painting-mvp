@@ -7,6 +7,8 @@ use App\Http\Controllers\Portal\PortalController;
 use App\Http\Presenters\CatalogOptions;
 use App\Http\Presenters\EnquiryPresenter;
 use App\Models\Address;
+use App\Models\Customer;
+use App\Models\Enquiry;
 use App\Support\IndianIds;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -31,7 +33,22 @@ class AddressController extends PortalController
 
     public function store(Request $request): RedirectResponse
     {
-        $customer = $this->customer($request);
+        return $this->createFor($this->customer($request), $request);
+    }
+
+    /**
+     * "Add a delivery address" inside the enquiry editor: the address belongs to the enquiry's
+     * customer, also when staff are editing the enquiry for them.
+     */
+    public function storeForEnquiry(Request $request, Enquiry $enquiry): RedirectResponse
+    {
+        $this->authorizeEditor($request, $enquiry);
+
+        return $this->createFor($enquiry->customer, $request);
+    }
+
+    private function createFor(Customer $customer, Request $request): RedirectResponse
+    {
         $data = $this->validated($request);
 
         // The first address of each kind becomes the default.

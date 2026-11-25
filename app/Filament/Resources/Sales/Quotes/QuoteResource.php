@@ -9,8 +9,9 @@ use App\Filament\Resources\Sales\Enquiries\EnquiryResource;
 use App\Filament\Resources\Sales\Quotes\Pages\EditQuote;
 use App\Filament\Resources\Sales\Quotes\Pages\ListQuotes;
 use App\Filament\Support\MoneyInput;
-use App\Models\ComplexityLevel;
+use App\Models\Artist;
 use App\Models\EnquiryLine;
+use App\Models\WorkCharge;
 use App\Models\Quote;
 use App\Providers\Filament\AdminPanelProvider;
 use App\Support\Money;
@@ -24,6 +25,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Fieldset;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
@@ -34,6 +36,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\HtmlString;
 use UnitEnum;
 
 /**
@@ -95,39 +98,114 @@ class QuoteResource extends Resource
         return $schema->columns(['default' => 1, 'lg' => 1, '2xl' => 3])->components([
             Grid::make(1)->columnSpan(['default' => 1, '2xl' => 2])->schema([
                 Section::make('Artworks')
-                    ->description('Prices come from the pricing engine. Change a unit price to override it (a reason is required).')
+                    ->description('Unit price = calculated price + labour + work after the artwork. Type a different price to override it.')
                     ->schema([
                         Repeater::make('lines')
                             ->relationship('lines')
                             ->hiddenLabel()
                             ->orderColumn('position')
                             ->addActionLabel('Add a line')
-                            ->itemLabel(fn (array $state): ?string => $state['title'] ?? null)
+                            ->itemLabel(fn (array $state): ?string => self::itemLabel($state))
                             ->collapsible()
-                            ->columns(['default' => 2, 'md' => 6])
+                            ->columns(1)
                             ->schema([
                                 Hidden::make('enquiry_line_id'),
                                 Hidden::make('calculated_unit_price'),
                                 Hidden::make('unit_cost'),
-                                TextInput::make('title')->required()->columnSpan(['default' => 2, 'md' => 4]),
-                                TextInput::make('quantity')->numeric()->minValue(1)->default(1)->required()->columnSpan(1),
-                                Toggle::make('is_optional')->label('Optional')->inline(false)->columnSpan(1),
-                                Textarea::make('spec')->label('Specification')->rows(2)->columnSpanFull(),
-                                Select::make('complexity_level_id')
-                                    ->label('Complexity (new creation)')
-                                    ->options(fn () => ComplexityLevel::query()->where('is_active', true)->orderBy('sort_order')->pluck('name', 'id'))
-                                    ->visible(fn (Get $get) => self::isCustomCreation($get('enquiry_line_id')))
-                                    ->live()
-                                    ->afterStateUpdated(fn (Get $get, Set $set, $state) => self::reprice($get, $set, $state ? (int) $state : null))
-                                    ->columnSpan(2),
-                                MoneyInput::make('unit_price')->label('Unit price')->required()->live(onBlur: true)->columnSpan(['default' => 1, 'md' => 2])
-                                    ->helperText(fn (Get $get) => self::priceHint($get)),
-                                MoneyInput::make('discount_amount')->label('Line discount')->default(0)->columnSpan(['default' => 1, 'md' => 2]),
-                                TextInput::make('override_reason')
-                                    ->label('Why is the price changed?')
-                                    ->visible(fn (Get $get) => self::isOverridden($get))
-                                    ->required(fn (Get $get) => self::isOverridden($get))
-                                    ->columnSpanFull(),
+                                Hidden::make('breakdown'),
+
+                                TextInput::make('title')->required()->live(onBlur: true),
+                                Textarea::make('spec')->label('What the customer asked for')->rows(2)->autosize(),
+
+                                Fieldset::make('Pricing')
+                                    ->columns(['default' => 1, 'sm' => 2, 'md' => 3])
+                                    ->schema([
+                                        Select::make('artist_id')
+                                            ->label('Artist')
+                                            ->placeholder('Choose an artist')
+                                            ->options(fn (Get $get) => self::artistOptions($get('artist_id')))
+                                            ->visible(fn (Get $get) => self::isCustomCreation($get('enquiry_line_id')))
+                                            ->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => self::reprice($get, $set))
+                                            ->helperText('Their fee per m² prices the artwork.'),
+                                        TextInput::make('quantity')->numeric()->minValue(1)->default(1)->required()->live(onBlur: true),
+                                        MoneyInput::make('labour_amount')->label('Labour (per piece)')->default(0)
+                                            ->dehydrateStateUsing(fn ($state): int => self::paise($state))
+                                            ->live(onBlur: true)
+                                            ->afterStateUpdated(fn (Get $get, Set $set, $state, $old) => self::applyLabour($get, $set, $state, $old))
+                                            ->helperText('Added to the unit price.'),
+
+                                        MoneyInput::make('unit_price')->label('Unit price')->required()->live(onBlur: true)
+                                            ->helperText(fn (Get $get) => self::priceHint($get)),
+                                        MoneyInput::make('discount_amount')->label('Line discount')->default(0)
+                                            ->dehydrateStateUsing(fn ($state): int => self::paise($state))
+                                            ->live(onBlur: true)
+                                            ->helperText('Off the line total.'),
+                                        Toggle::make('is_optional')->label('Optional')->inline(false)->live()
+                                            ->helperText('The customer may leave it out.'),
+
+                                        TextInput::make('override_reason')
+                                            ->label('Why is the price changed?')
+                                            ->visible(fn (Get $get) => self::isOverridden($get))
+                                            ->required(fn (Get $get) => self::isOverridden($get))
+                                            ->columnSpanFull(),
+                                    ]),
+
+                                Fieldset::make('Work after the artwork')
+                                    ->columns(1)
+                                    ->schema([
+                                        Hidden::make('work_applied')->dehydrated(false)
+                                            ->afterStateHydrated(fn (Hidden $component, Get $get) => $component->state(self::workTotal($get))),
+                                        Repeater::make('work_items')
+                                            ->hiddenLabel()
+                                            ->addActionLabel('Add work (cutting, mounting, installation…)')
+                                            ->defaultItems(0)
+                                            ->reorderable(false)
+                                            ->columns(['default' => 1, 'sm' => 3])
+                                            ->live()
+                                            ->afterStateUpdated(fn (Get $get, Set $set) => self::applyWork($get, $set))
+                                            ->schema([
+                                                Hidden::make('name'),
+                                                Select::make('work_charge_id')
+                                                    ->label('Work')
+                                                    ->options(fn () => WorkCharge::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')
+                                                        ->get()->mapWithKeys(fn (WorkCharge $w) => [$w->id => $w->name.' · '.Money::format($w->amount)])->all())
+                                                    ->required()
+                                                    ->native(false)
+                                                    ->live()
+                                                    ->afterStateUpdated(function ($state, Get $get, Set $set): void {
+                                                        $work = $state ? WorkCharge::find($state) : null;
+                                                        $set('name', $work?->name);
+                                                        $set('amount', Money::toRupees($work?->amount ?? 0));
+                                                        self::applyWork($get, $set, '../../');
+                                                    })
+                                                    ->columnSpan(['default' => 1, 'sm' => 2]),
+                                                MoneyInput::make('amount')->label('Amount (per piece)')->default(0)->required()
+                                                    ->dehydrateStateUsing(fn ($state): int => self::paise($state))
+                                                    ->live(onBlur: true)
+                                                    ->afterStateUpdated(fn (Get $get, Set $set) => self::applyWork($get, $set, '../../'))
+                                                    ->helperText('From Work charges; change it for this quote.'),
+                                            ]),
+                                    ]),
+
+                                Section::make('Price breakdown')
+                                    ->description(fn (Get $get) => self::breakdownSummary($get))
+                                    ->visible(fn (Get $get) => self::lineBreakdown($get) !== null)
+                                    ->collapsible()
+                                    ->collapsed()
+                                    ->compact()
+                                    ->schema([
+                                        TextEntry::make('price_breakdown')->hiddenLabel()
+                                            ->state(fn (Get $get) => ($b = self::lineBreakdown($get))
+                                                ? new HtmlString(view('filament.quotes.line-breakdown', [
+                                                    'b' => $b,
+                                                    'labour' => self::paise($get('labour_amount')),
+                                                    'work' => self::workRows($get),
+                                                    'quoted' => self::quotedUnitPrice($get),
+                                                ])->render())
+                                                : null)
+                                            ->html(),
+                                    ]),
                             ]),
                     ]),
 
@@ -144,8 +222,8 @@ class QuoteResource extends Resource
                             ->schema([
                                 TextInput::make('name')->required()->columnSpan(2),
                                 Select::make('inclusion')->options(['charged' => 'Charged', 'included' => 'Included free', 'excluded' => 'Not included'])
-                                    ->default('charged')->required()->native(false)->columnSpan(['default' => 1, 'md' => 1]),
-                                MoneyInput::make('amount')->default(0)->columnSpan(['default' => 1, 'md' => 2]),
+                                    ->default('charged')->required()->native(false)->live()->columnSpan(['default' => 1, 'md' => 1]),
+                                MoneyInput::make('amount')->default(0)->live(onBlur: true)->columnSpan(['default' => 1, 'md' => 2]),
                             ]),
                     ]),
 
@@ -160,15 +238,17 @@ class QuoteResource extends Resource
 
             Grid::make(1)->columnSpan(1)->schema([
                 Section::make('Totals')
-                    ->description('Discount updates live; line and extra changes update when you save.')
+                    ->description('Updates as you edit. Click “Save & recalculate” to keep the changes.')
                     ->schema([
                         TextEntry::make('status')->badge(),
                         TextEntry::make('enquiry_link')->label('Enquiry')
                             ->state(fn (?Quote $record) => $record ? $record->enquiry->reference.' · '.$record->enquiry->customer->displayName() : null)
                             ->url(fn (?Quote $record) => $record ? EnquiryResource::getUrl('view', ['record' => $record->enquiry_id]) : null)
                             ->color('primary'),
-                        TextEntry::make('items_total')->label('Artworks')->formatStateUsing(fn ($state) => Money::format((int) $state)),
-                        TextEntry::make('extras_total')->label('Extras')->formatStateUsing(fn ($state) => Money::format((int) $state)),
+                        TextEntry::make('items_live')->label('Artworks')
+                            ->state(fn (?Quote $record, Get $get) => ($t = self::liveTotals($record, $get)) ? Money::format($t['items']) : null),
+                        TextEntry::make('extras_live')->label('Extras')
+                            ->state(fn (?Quote $record, Get $get) => ($t = self::liveTotals($record, $get)) ? Money::format($t['extras']) : null),
                         // One discount at a time: typing a % clears the amount and vice versa; totals update as you type.
                         Grid::make(2)->schema([
                             TextInput::make('discount_percent')->label('Discount %')->numeric()->minValue(0)->maxValue(100)->default(0)->suffix('%')
@@ -238,17 +318,29 @@ class QuoteResource extends Resource
     }
 
     /**
-     * Totals with the discount as currently typed (not yet saved), worked out the same way as QuoteBuilder:
-     * artworks and extras as last saved, minus the discount, plus GST.
+     * Totals from the form as currently typed (not yet saved), worked out the same way as QuoteBuilder:
+     * line totals (unit price × qty − line discount) and charged extras, minus the discount, plus GST.
      *
-     * @return array{discount: int, taxable: int, intra_state: bool, rate: float, cgst: int, sgst: int, igst: int, grand_total: int}|null
+     * @return array{items: int, extras: int, discount: int, taxable: int, intra_state: bool, rate: float, cgst: int, sgst: int, igst: int, grand_total: int}|null
      */
     private static function liveTotals(?Quote $quote, Get $get): ?array
     {
         if (! $quote) {
             return null;
         }
-        $subtotal = (int) $quote->items_total + (int) $quote->extras_total;
+        $lines = $get('lines');
+        $items = is_array($lines)
+            ? collect($lines)
+                ->filter(fn ($l) => is_array($l) && (empty($l['is_optional']) || ($l['is_selected'] ?? true)))
+                ->sum(fn (array $l) => self::lineTotal($l))
+            : (int) $quote->items_total;
+        $extrasState = $get('extras');
+        $extras = is_array($extrasState)
+            ? collect($extrasState)
+                ->filter(fn ($e) => is_array($e) && ($e['inclusion'] ?? 'charged') === 'charged')
+                ->sum(fn (array $e) => self::paise($e['amount'] ?? 0))
+            : (int) $quote->extras_total;
+        $subtotal = $items + $extras;
         $percent = (float) $get('discount_percent');
         $amount = $get('discount_amount');
         $amount = $amount === null || $amount === '' ? 0 : Money::toPaise((string) $amount);
@@ -260,7 +352,59 @@ class QuoteResource extends Resource
             (bool) $quote->enquiry->customer?->tax_exempt,
         );
 
-        return ['discount' => $discount, 'rate' => (float) $gst['rate'], ...$gst];
+        return ['items' => $items, 'extras' => $extras, 'discount' => $discount, 'rate' => (float) $gst['rate'], ...$gst];
+    }
+
+    /** Rupees as typed in a money box → paise; empty → 0. */
+    private static function paise(mixed $state): int
+    {
+        if ($state === null || $state === '' || ! is_numeric($state)) {
+            return 0;
+        }
+
+        return max(0, Money::toPaise((string) $state));
+    }
+
+    /**
+     * Line total from the repeater item state: unit price × quantity − line discount.
+     *
+     * @param  array<string, mixed>  $state
+     */
+    private static function lineTotal(array $state): int
+    {
+        return max(0, self::paise($state['unit_price'] ?? 0) * max(1, (int) ($state['quantity'] ?? 1)) - self::paise($state['discount_amount'] ?? 0));
+    }
+
+    /**
+     * @param  array<string, mixed>  $state
+     */
+    private static function itemLabel(array $state): ?string
+    {
+        $title = $state['title'] ?? null;
+        if ($title === null || $title === '') {
+            return null;
+        }
+
+        // The repeater hands the item label its dehydrated state: money is already in paise here.
+        $total = max(0, (int) ($state['unit_price'] ?? 0) * max(1, (int) ($state['quantity'] ?? 1)) - (int) ($state['discount_amount'] ?? 0));
+
+        return $title.' · '.Money::format($total);
+    }
+
+    /**
+     * Active artists with a fee, labelled with it (plus the one already chosen, even if inactive now).
+     *
+     * @return array<int, string>
+     */
+    private static function artistOptions(mixed $current): array
+    {
+        return Artist::query()
+            ->where(fn (Builder $q) => $q->where('is_active', true)->where('fee_per_m2', '>', 0))
+            ->when($current, fn (Builder $q) => $q->orWhere('id', (int) $current))
+            ->orderBy('sort_order')->orderBy('name')
+            ->get()
+            ->mapWithKeys(fn (Artist $a) => [$a->id => $a->name.' · '.Money::format($a->fee_per_m2).' / m²'])
+            ->all();
     }
 
     private static function responseSummary(?Quote $quote): ?string
@@ -295,24 +439,144 @@ class QuoteResource extends Resource
     private static function priceHint(Get $get): ?string
     {
         $calculated = (int) $get('calculated_unit_price');
-        if (! $calculated) {
+
+        return $calculated ? 'Calculated '.Money::format($calculated) : null;
+    }
+
+    /** @var array<string, array<string, mixed>|null> */
+    private static array $breakdownCache = [];
+
+    /**
+     * The pricing engine figures for this line: as saved on the quote, or worked out again from the
+     * enquiry line when the saved snapshot predates the detailed breakdown. Null for hand-added lines.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function lineBreakdown(Get $get): ?array
+    {
+        $saved = $get('breakdown');
+        if (is_array($saved) && isset($saved['components']) && (($saved['components'][0]['measure'] ?? null) !== null || $saved['components'] === [])) {
+            return $saved;
+        }
+
+        $lineId = $get('enquiry_line_id');
+        if (! $lineId) {
+            return null;
+        }
+        $artist = $get('artist_id') ? (int) $get('artist_id') : null;
+        $key = $lineId.':'.$artist;
+        if (! array_key_exists($key, self::$breakdownCache)) {
+            $line = EnquiryLine::with('enquiry')->find($lineId);
+            self::$breakdownCache[$key] = $line ? app(QuoteBuilder::class)->linePrice($line, $line->enquiry, $artist)['breakdown'] : null;
+        }
+
+        return self::$breakdownCache[$key];
+    }
+
+    private static function breakdownSummary(Get $get): ?string
+    {
+        $b = self::lineBreakdown($get);
+        if (! $b) {
+            return null;
+        }
+        $labour = self::paise($get('labour_amount'));
+        $work = self::workTotal($get);
+        $parts = collect($b['components'])->pluck('label')
+            ->when($labour > 0, fn ($c) => $c->push('Labour'))
+            ->merge(array_column(self::workRows($get), 'name'))
+            ->implode(' + ');
+
+        return ($parts ?: 'Nothing priced yet').' → '.Money::format((int) $b['unit_price'] + $labour + $work);
+    }
+
+    private static function quotedUnitPrice(Get $get): ?int
+    {
+        $state = $get('unit_price');
+        if ($state === null || $state === '' || ! is_numeric($state)) {
             return null;
         }
 
-        return 'Calculated '.Money::format($calculated).' · cost '.Money::format((int) $get('unit_cost'));
+        return Money::toPaise((string) $state);
     }
 
-    /** Re-runs the pricing engine for an enquiry line at the chosen complexity. */
-    private static function reprice(Get $get, Set $set, ?int $complexityId): void
+    /**
+     * Re-runs the pricing engine for an enquiry line with the chosen artist and the labour entered.
+     * The unit price follows the new calculated price unless staff had typed their own.
+     */
+    private static function reprice(Get $get, Set $set, string $p = ''): void
     {
-        $line = EnquiryLine::with('enquiry')->find($get('enquiry_line_id'));
+        $line = EnquiryLine::with('enquiry')->find($get($p.'enquiry_line_id'));
         if (! $line) {
             return;
         }
-        $price = app(QuoteBuilder::class)->linePrice($line, $line->enquiry, $complexityId);
-        $set('calculated_unit_price', $price['calculated_unit_price']);
-        $set('unit_cost', $price['unit_cost']);
-        $set('unit_price', Money::toRupees($price['unit_price']));
+        $typedOwn = self::paise($get($p.'unit_price')) !== (int) $get($p.'calculated_unit_price');
+
+        $price = app(QuoteBuilder::class)->linePrice($line, $line->enquiry,
+            $get($p.'artist_id') ? (int) $get($p.'artist_id') : null, self::paise($get($p.'labour_amount')), self::workTotal($get, $p));
+        $set($p.'calculated_unit_price', $price['calculated_unit_price']);
+        $set($p.'unit_cost', $price['unit_cost']);
+        $set($p.'breakdown', $price['breakdown']);
+        $set($p.'work_applied', self::workTotal($get, $p));
+        if (! $typedOwn) {
+            $set($p.'unit_price', Money::toRupees($price['unit_price']));
+        }
+    }
+
+    /**
+     * Work after the artwork as typed on the line ($p = path from where this is called to the line).
+     *
+     * @return list<array{name: string, amount: int}>
+     */
+    private static function workRows(Get $get, string $p = ''): array
+    {
+        return collect($get($p.'work_items') ?? [])
+            ->filter(fn ($i) => is_array($i) && ($i['work_charge_id'] ?? null))
+            ->map(fn (array $i) => [
+                'name' => (string) (($i['name'] ?? null) ?: WorkCharge::find($i['work_charge_id'])?->name ?? 'Work'),
+                'amount' => self::paise($i['amount'] ?? 0),
+            ])
+            ->values()->all();
+    }
+
+    private static function workTotal(Get $get, string $p = ''): int
+    {
+        return (int) array_sum(array_column(self::workRows($get, $p), 'amount'));
+    }
+
+    /**
+     * Work changed: lines from an enquiry are re-priced; on a hand-added line the difference is
+     * added to the unit price.
+     */
+    private static function applyWork(Get $get, Set $set, string $p = ''): void
+    {
+        if ($get($p.'enquiry_line_id')) {
+            self::reprice($get, $set, $p);
+
+            return;
+        }
+        $total = self::workTotal($get, $p);
+        $delta = $total - (int) $get($p.'work_applied');
+        if ($delta !== 0) {
+            $set($p.'unit_price', Money::toRupees(max(0, self::paise($get($p.'unit_price')) + $delta)));
+        }
+        $set($p.'work_applied', $total);
+    }
+
+    /**
+     * Labour changed: lines from an enquiry are re-priced; on a hand-added line the difference is
+     * added to the unit price.
+     */
+    private static function applyLabour(Get $get, Set $set, mixed $state, mixed $old): void
+    {
+        if ($get('enquiry_line_id')) {
+            self::reprice($get, $set);
+
+            return;
+        }
+        $delta = self::paise($state) - self::paise($old);
+        if ($delta !== 0) {
+            $set('unit_price', Money::toRupees(max(0, self::paise($get('unit_price')) + $delta)));
+        }
     }
 
     public static function getPages(): array

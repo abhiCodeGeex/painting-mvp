@@ -15,7 +15,7 @@ import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { InputError } from '@/ui/text';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
-import { ArrowLeft, ArrowRight, Check, Copy, LayoutGrid, LoaderCircle, Pencil, Plus, Send, Trash2 } from 'lucide';
+import { ArrowLeft, ArrowRight, Check, Copy, LayoutGrid, LoaderCircle, Pencil, Plus, Send, Trash2, UserCog } from 'lucide';
 
 interface Props {
     enquiry: EnquiryDetail;
@@ -23,6 +23,17 @@ interface Props {
     projectOptions: ProjectOptions;
     addresses: Address[];
     estimate: EnquiryEstimate;
+    /** Set when a staff member is editing the enquiry for the customer. */
+    staff: StaffContext | null;
+}
+
+interface StaffContext {
+    customer_name: string;
+    customer_email: string | null;
+    admin_url: string;
+    admin_list_url: string;
+    is_draft: boolean;
+    status_label: string;
 }
 
 /* ---------------------------- estimate total ---------------------------- */
@@ -176,7 +187,7 @@ export class EstimateTotal {
                 </button>
             </div>
 
-            <address-dialog [(open)]="addressOpen" [address]="null" [states]="projectOptions().states" />
+            <address-dialog [(open)]="addressOpen" [address]="null" [states]="projectOptions().states" [storeUrl]="addressStoreUrl()" />
         </form>
     `,
 })
@@ -188,6 +199,8 @@ export class ProjectStep {
 
     private router = inject(InertiaRouter);
     protected addressOpen = signal(false);
+    /** New addresses belong to the enquiry's customer (also when staff edit it for them). */
+    protected addressStoreUrl = computed(() => route('portal.enquiries.addresses.store', this.enquiry().id));
     protected form = new InertiaForm({
         project_name: '',
         project_type: 'home',
@@ -243,18 +256,51 @@ export class ProjectStep {
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <app-layout [breadcrumbs]="breadcrumbs()">
-            <inertia-head title="New enquiry" />
+            <inertia-head [title]="staff() ? 'Enquiry for ' + staff()!.customer_name : 'New enquiry'" />
             <div class="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-6">
+                @if (staff(); as s) {
+                    <div
+                        class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100"
+                        role="status"
+                    >
+                        <div class="flex items-start gap-2">
+                            <svg [icon]="UserCog" class="mt-0.5 size-4 shrink-0" />
+                            <div>
+                                <div>
+                                    Editing for <strong>{{ s.customer_name }}</strong>
+                                    @if (s.customer_email) {
+                                        <span class="opacity-75">({{ s.customer_email }})</span>
+                                    }
+                                    as staff
+                                </div>
+                                <div class="text-xs opacity-75">
+                                    @if (s.is_draft) {
+                                        Changes are saved to the customer's draft. “Send enquiry” sends it on their behalf.
+                                    } @else {
+                                        Status: {{ s.status_label }}. Changes to artworks and project details are saved straight away.
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                        <a ui-button variant="outline" size="sm" [href]="s.admin_url"> <svg [icon]="ArrowLeft" class="size-4" /> Back to admin </a>
+                    </div>
+                }
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <h1 class="text-2xl font-semibold tracking-tight">{{ enquiry().project_name }}</h1>
                         <p class="text-muted-foreground text-sm">
-                            Draft — saved automatically as you go. Nothing is sent until you press “Send enquiry”.
+                            @if (isDraft()) {
+                                Draft — saved automatically as you go. Nothing is sent until you press “Send enquiry”.
+                            } @else {
+                                {{ enquiry().display_reference }} — already sent. Edits are saved as you go.
+                            }
                         </p>
                     </div>
-                    <button ui-button variant="ghost" size="sm" type="button" class="text-muted-foreground" (click)="deleteDraft()">
-                        <svg [icon]="Trash2" class="size-4" /> Delete draft
-                    </button>
+                    @if (isDraft()) {
+                        <button ui-button variant="ghost" size="sm" type="button" class="text-muted-foreground" (click)="deleteDraft()">
+                            <svg [icon]="Trash2" class="size-4" /> Delete draft
+                        </button>
+                    }
                 </div>
 
                 <ol class="grid grid-cols-3 gap-2">
@@ -310,7 +356,9 @@ export class ProjectStep {
                                             <svg [icon]="LayoutGrid" class="size-4" /> See all on one wall
                                         </button>
                                     }
-                                    <button ui-button type="button" (click)="openEditor(null)"><svg [icon]="Plus" class="size-4" /> Add artwork</button>
+                                    <button ui-button type="button" (click)="openEditor(null)">
+                                        <svg [icon]="Plus" class="size-4" /> Add artwork
+                                    </button>
                                 </div>
                             </div>
 
@@ -414,17 +462,27 @@ export class ProjectStep {
                                 <button ui-button variant="outline" type="button" (click)="step.set(1)">
                                     <svg [icon]="ArrowLeft" class="size-4" /> Artworks
                                 </button>
-                                <div class="flex flex-col items-end gap-1">
-                                    <button ui-button size="lg" type="button" [disabled]="sending() || missing().length > 0" (click)="send()">
-                                        @if (sending()) {
-                                            <svg [icon]="LoaderCircle" class="size-4 animate-spin" />
-                                        } @else {
-                                            <svg [icon]="Send" class="size-4" />
-                                        }
-                                        Send enquiry
-                                    </button>
-                                    <span class="text-muted-foreground text-xs">We'll review it and reply, usually within one working day.</span>
-                                </div>
+                                @if (isDraft()) {
+                                    <div class="flex flex-col items-end gap-1">
+                                        <button ui-button size="lg" type="button" [disabled]="sending() || missing().length > 0" (click)="send()">
+                                            @if (sending()) {
+                                                <svg [icon]="LoaderCircle" class="size-4 animate-spin" />
+                                            } @else {
+                                                <svg [icon]="Send" class="size-4" />
+                                            }
+                                            {{ staff() ? 'Send enquiry for customer' : 'Send enquiry' }}
+                                        </button>
+                                        <span class="text-muted-foreground text-xs">
+                                            @if (staff()) {
+                                                Sent on the customer's behalf. They get the usual confirmation email.
+                                            } @else {
+                                                We'll review it and reply, usually within one working day.
+                                            }
+                                        </span>
+                                    </div>
+                                } @else if (staff(); as s) {
+                                    <a ui-button size="lg" [href]="s.admin_url"><svg [icon]="Check" class="size-4" /> Done — back to admin</a>
+                                }
                             </div>
                         </div>
                     }
@@ -455,10 +513,18 @@ export default class EditEnquiry {
     protected readonly Send = Send;
     protected readonly LoaderCircle = LoaderCircle;
 
-    protected breadcrumbs = computed(() => [
-        { title: 'My enquiries', href: route('portal.enquiries.index') },
-        { title: this.enquiry().display_reference, href: route('portal.enquiries.edit', this.enquiry().id) },
-    ]);
+    protected staff = computed(() => this.props().staff ?? null);
+    protected isDraft = computed(() => this.enquiry().status === 'draft');
+    protected readonly UserCog = UserCog;
+
+    // Staff have no "My enquiries" list in the portal: they get back via the banner's admin link.
+    protected breadcrumbs = computed(() => {
+        const s = this.staff();
+        const current = { title: this.enquiry().display_reference, href: route('portal.enquiries.edit', this.enquiry().id) };
+        return s
+            ? [{ title: s.customer_name, href: current.href }, current]
+            : [{ title: 'My enquiries', href: route('portal.enquiries.index') }, current];
+    });
 
     protected summary = computed(() => {
         const e = this.enquiry();

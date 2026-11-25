@@ -58,6 +58,8 @@ export interface EnquiryLine {
     /** Picture turned clockwise (0/90/180/270°); width_mm/height_mm stay the painting's own size (see hungSize). */
     image_rotation?: number;
     frame_id: number | null;
+    /** Stacked frames, innermost first (layer 1 = frame_id); each may be split between two mouldings. */
+    frame_layers?: FrameLayerInput[];
     frame_advice_requested: boolean;
     mat_id: number | null;
     mat_border_mm: number | null;
@@ -153,6 +155,15 @@ export interface CatalogArtwork {
     medium_ids: number[];
     substrate_ids: number[];
     is_featured: boolean;
+}
+
+/** How a frame layer is split between two mouldings. */
+export type FrameSplitMode = 'top_bottom_sides' | 'halves';
+
+/** One frame layer on a line: primary moulding, optionally split with a second one. */
+export interface FrameLayerInput {
+    frame_id: number;
+    split: { frame_id: number; mode: FrameSplitMode } | null;
 }
 
 export interface CatalogFrame {
