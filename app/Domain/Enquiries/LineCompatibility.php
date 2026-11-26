@@ -2,6 +2,7 @@
 
 namespace App\Domain\Enquiries;
 
+use App\Domain\Pricing\FrameLayers;
 use App\Enums\LineSource;
 use App\Models\Artwork;
 use App\Models\Frame;
@@ -79,16 +80,36 @@ class LineCompatibility
         }
 
         if ($frame) {
+            // Every moulding: the inner frame around the picture (+ mat), each outer layer around the
+            // frames inside it. A split layer's two mouldings share one opening.
             $border = $mat ? (int) ($line['mat_border_mm'] ?? $mat->default_border_mm) : 0;
-            $innerW = $width + 2 * $border;
-            $innerH = $height + 2 * $border + ($mat?->bottom_weight_mm ?? 0);
-            $tooBig = ! self::fits($innerW, $innerH, $frame->max_inner_width_mm, $frame->max_inner_height_mm)
-                || ($frame->max_perimeter_mm && 2 * ($innerW + $innerH) > $frame->max_perimeter_mm);
-            if ($tooBig) {
-                $result->errors['frame_id'] = "{$frame->name} is not available for this size.";
-            }
-            if ($substrate && $frame->substrates->isNotEmpty() && ! $frame->substrates->contains($substrate)) {
-                $result->errors['frame_id'] = "{$frame->name} does not suit {$substrate->name}.";
+            $openW = $width + 2 * $border;
+            $openH = $height + 2 * $border + ($mat?->bottom_weight_mm ?? 0);
+            $layers = FrameLayers::normalise($line['frame_layers'] ?? null, (int) $frame->id);
+            $frames = Frame::with('substrates')->whereIn('id', FrameLayers::frameIds($layers))->get()->keyBy('id');
+            foreach ($layers as $i => $layer) {
+                $parts = ['frame_id' => $frames->get($layer['frame_id'])];
+                if ($layer['split']) {
+                    $parts['split.frame_id'] = $frames->get($layer['split']['frame_id']);
+                }
+                $widest = 0;
+                foreach ($parts as $key => $f) {
+                    if (! $f) {
+                        continue;
+                    }
+                    $field = $i === 0 && $key === 'frame_id' ? 'frame_id' : "frame_layers.$i.$key";
+                    $tooBig = ! self::fits($openW, $openH, $f->max_inner_width_mm, $f->max_inner_height_mm)
+                        || ($f->max_perimeter_mm && 2 * ($openW + $openH) > $f->max_perimeter_mm);
+                    if ($tooBig) {
+                        $result->errors[$field] = "{$f->name} is not available for this size.";
+                    }
+                    if ($substrate && $f->substrates->isNotEmpty() && ! $f->substrates->contains($substrate)) {
+                        $result->errors[$field] = "{$f->name} does not suit {$substrate->name}.";
+                    }
+                    $widest = max($widest, (int) $f->profile_width_mm);
+                }
+                $openW += 2 * $widest;
+                $openH += 2 * $widest;
             }
         }
 

@@ -584,6 +584,8 @@ export class Room360 implements OnDestroy {
     private inspectKey: string | null = null;
     /** True while the camera glides to the artwork (the orbit controls wait until it has arrived). */
     private gliding = false;
+    /** The glide into inspect: its own frame handle, so nothing else cancels it half-way. */
+    private glideFrame = 0;
     private controls: OrbitControls | null = null;
     private wallPlane: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
     private weave: THREE.Texture | null = null;
@@ -617,6 +619,8 @@ export class Room360 implements OnDestroy {
     private placeholder = gradientTexture();
     private pictureVersion = signal(0);
     private loadToken = 0;
+    /** Changes when a room's textures are replaced: furniture loads for an earlier room are thrown away. */
+    private roomGen = 0;
     private loadedRoom = '';
     private frameQueued = 0;
     private destroyed = false;
@@ -727,6 +731,12 @@ export class Room360 implements OnDestroy {
                 if (Object.keys(kept).length !== Object.keys(this.offsets()).length) this.offsets.set(kept);
             });
             untracked(() => {
+                const live = new Set(this.pieces().flatMap((p) => [p.imageUrl, p.detailUrl].filter((u): u is string => !!u)));
+                for (const [url, t] of this.textures) {
+                    if (live.has(url)) continue;
+                    t.dispose();
+                    this.textures.delete(url);
+                }
                 if (this.meta) this.buildPieces();
             });
         });
@@ -910,9 +920,27 @@ export class Room360 implements OnDestroy {
             this.buildPieces();
             this.lookAtArt(false, firstLoad);
             this.shown.set(true);
+            this.loadedRoom = key;
             this.requestFrame();
+        } catch {
+            if (token !== this.loadToken) return;
+            this.switching.set('');
+            this.loadingHd.set(false);
+            const message = 'This room could not be loaded. Please try another one.';
+            if (this.shown()) {
+                // Keep showing the room that works, and say so.
+                this.notice.set(message);
+                if (this.loadedRoom && this.loadedRoom !== key) this.roomKey.set(this.loadedRoom);
+            } else {
+                this.error.set(message);
+            }
+            return;
+        }
 
-            // Full-resolution faces, the one in view first, uploaded one per frame (no hitch).
+        // Full-resolution faces, the one in view first, uploaded one per frame (no hitch). A face that
+        // fails to download keeps its small version: the room still works.
+        const meta = this.meta!;
+        try {
             this.loadingHd.set(true);
             const order = [...FACE_ORDER].sort((a, b) => this.faceWeight(meta, b) - this.faceWeight(meta, a));
             for (const f of order) {
@@ -946,20 +974,10 @@ export class Room360 implements OnDestroy {
                 this.renderer.initTexture(mask);
                 this.setBase('designed', 'detail', { map, mask });
             }
-            if (token === this.loadToken && !this.emptyLoad) this.loadingHd.set(false);
-            this.loadedRoom = key;
         } catch {
-            if (token !== this.loadToken) return;
-            this.switching.set('');
-            this.loadingHd.set(false);
-            const message = 'This room could not be loaded. Please try another one.';
-            if (this.shown()) {
-                // Keep showing the room that works, and say so.
-                this.notice.set(message);
-                if (this.loadedRoom && this.loadedRoom !== key) this.roomKey.set(this.loadedRoom);
-            } else {
-                this.error.set(message);
-            }
+            /* keep the small faces */
+        } finally {
+            if (token === this.loadToken && !this.emptyLoad) this.loadingHd.set(false);
         }
     }
 
@@ -1191,6 +1209,7 @@ export class Room360 implements OnDestroy {
 
     /** Frees everything loaded for the current room (both bases and the furniture layers). */
     private disposeRoomTextures(): void {
+        this.roomGen++;
         for (const set of [this.bases.designed, this.bases.empty]) {
             for (const t of set.values()) {
                 t.map.dispose();
@@ -1243,9 +1262,9 @@ export class Room360 implements OnDestroy {
     private layerTexture(dir: string, file: string, colour = true): Promise<THREE.Texture> {
         let load = this.layerLoads.get(file);
         if (!load) {
-            const token = this.loadToken;
+            const gen = this.roomGen;
             load = this.loadTexture(`${dir}/${file}`, colour, colour).then((t) => {
-                if (token !== this.loadToken || this.destroyed) {
+                if (gen !== this.roomGen || this.destroyed) {
                     t.dispose();
                     throw new Error('stale');
                 }
@@ -1265,10 +1284,10 @@ export class Room360 implements OnDestroy {
      */
     private loadEmpty(meta: RoomMeta, dir: string): Promise<void> {
         const empty = meta.layers!.empty;
-        const token = this.loadToken;
+        const gen = this.roomGen;
         const name = (pattern: string, f: string) => pattern.replace('<face>', f);
         const small = (file: string) => file.replace(/\.webp$/i, '-sm.webp');
-        const stale = () => token !== this.loadToken || this.destroyed;
+        const stale = () => gen !== this.roomGen || this.destroyed;
         const faces = FACE_ORDER.filter((f) => this.emptySlots.has(f));
         this.emptyLoad ??= (async () => {
             const firsts = await Promise.all(
@@ -1448,6 +1467,7 @@ export class Room360 implements OnDestroy {
             disposeTree(child);
         }
         this.pieceTextures.splice(0).forEach((t) => t.dispose());
+        this.pixelated = false; // the new picture textures start smooth; the next frame decides again
         const { placed, tooBig } = this.layout(meta);
         this.notice.set(tooBig ? 'Your artwork is larger than the free space on this wall — try a bigger room, such as the Hotel lobby.' : '');
         this.pieceGroups.clear();
@@ -1668,7 +1688,7 @@ export class Room360 implements OnDestroy {
     /** Close-up +/−: glide the camera along its line to the target (quick, eased), within the close-up's limits. */
     private dollyInspect(factor: number): void {
         const c = this.controls;
-        if (!c) return;
+        if (!c || this.gliding) return; // the glide owns the camera until it lands
         const from = this.camera.position.clone();
         const offset = from.clone().sub(c.target);
         const dist = offset.length();
@@ -1973,12 +1993,25 @@ export class Room360 implements OnDestroy {
         controls.maxAzimuthAngle = THREE.MathUtils.degToRad(40);
         controls.minPolarAngle = THREE.MathUtils.degToRad(65);
         controls.maxPolarAngle = THREE.MathUtils.degToRad(115);
-        const bounds = { x: piece.outerW / 2 + 0.15, y: piece.outerH / 2 + 0.15 };
-        const front = new THREE.Box3().setFromObject(g).max.z + 0.01;
+        // The piece can be rebuilt while up close (new size, frame, mat): always measure the current one.
+        let measured: THREE.Group | null = null;
+        let bounds = { x: 0, y: 0 };
+        let front = 0;
         controls.addEventListener('change', () => {
+            const cur = this.pieceGroups.get(key);
+            const dd = this.dims().find((p) => p.key === key)?.d;
+            if (!cur || !dd) {
+                queueMicrotask(() => this.exitInspect());
+                return;
+            }
+            if (cur !== measured) {
+                measured = cur;
+                bounds = { x: dd.outerW / 2 + 0.15, y: dd.outerH / 2 + 0.15 };
+                front = new THREE.Box3().setFromObject(cur).max.z + 0.01;
+            }
             // Sliding across the picture stays on the picture.
-            controls.target.x = THREE.MathUtils.clamp(controls.target.x, g.position.x - bounds.x, g.position.x + bounds.x);
-            controls.target.y = THREE.MathUtils.clamp(controls.target.y, g.position.y - bounds.y, g.position.y + bounds.y);
+            controls.target.x = THREE.MathUtils.clamp(controls.target.x, cur.position.x - bounds.x, cur.position.x + bounds.x);
+            controls.target.y = THREE.MathUtils.clamp(controls.target.y, cur.position.y - bounds.y, cur.position.y + bounds.y);
             controls.target.z = target.z;
             // Never through the painting or its frame: stay at least 1 cm in front of the piece's front face.
             if (this.camera.position.z < front) this.camera.position.z = front;
@@ -2010,7 +2043,7 @@ export class Room360 implements OnDestroy {
             this.sky.position.copy(this.camera.position);
             this.renderer.render(this.scene, this.camera);
             if (t < 1) {
-                this.animation = requestAnimationFrame(step);
+                this.glideFrame = requestAnimationFrame(step);
                 return;
             }
             this.gliding = false;
@@ -2018,12 +2051,13 @@ export class Room360 implements OnDestroy {
             controls.update();
             this.requestFrame();
         };
-        this.animation = requestAnimationFrame(step);
+        this.glideFrame = requestAnimationFrame(step);
     }
 
     exitInspect(): void {
         if (!this.inspecting()) return;
         cancelAnimationFrame(this.animation);
+        cancelAnimationFrame(this.glideFrame);
         this.gliding = false;
         this.controls?.dispose();
         this.controls = null;
@@ -2187,10 +2221,20 @@ export class Room360 implements OnDestroy {
 
     /** Exports the artwork(s) — not the room — as a GLB for the AR viewer, centred on the arrangement. */
     private async openAr(): Promise<void> {
+        this.arModel.set(null);
         this.arOpen.set(true);
+        try {
+            await this.exportAr();
+        } catch {
+            this.arOpen.set(false);
+            this.notice.set('The AR model could not be prepared. Please try again.');
+        }
+    }
+
+    private async exportAr(): Promise<void> {
         const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
         const groups = [...this.pieceGroups.values()];
-        if (!groups.length) return;
+        if (!groups.length) throw new Error('nothing to export');
         const cx = groups.reduce((s, g) => s + g.position.x, 0) / groups.length;
         const cy = groups.reduce((s, g) => s + g.position.y, 0) / groups.length;
         const root = new THREE.Group();
@@ -2246,6 +2290,18 @@ export class Room360 implements OnDestroy {
      * changed when crossing the threshold, since it re-uploads the texture.
      */
     private pixelated = false;
+
+    /** The picture's textures (a canvas block has a material per face, so material can be an array). */
+    private static pictureMaps(o: THREE.Object3D): THREE.Texture[] {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || mesh.name !== 'picture') return [];
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const maps = mats
+            .map((m) => (m as THREE.MeshStandardMaterial | undefined)?.map)
+            .filter((t): t is THREE.Texture => t instanceof THREE.Texture);
+        return [...new Set(maps)];
+    }
+
     private updatePictureFilter(): void {
         const key = this.inspectKey;
         const piece = key ? this.dims().find((p) => p.key === key) : null;
@@ -2256,12 +2312,12 @@ export class Room360 implements OnDestroy {
         const screenPxPerMetre = this.renderer.domElement.height / viewH;
         let texels = 0;
         g.traverse((o) => {
-            const map = ((o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined)?.map;
-            const img = map?.image as { width?: number; height?: number } | undefined;
-            // The picture is always upright (a swap only stretches it), so its width runs across the piece.
-            const across = (img?.width ?? 0) * (map?.repeat.x ?? 0);
-            if (map && map !== this.placeholder && !(map as THREE.CanvasTexture).isCanvasTexture && img?.width && across > 0)
-                texels = Math.max(texels, across);
+            for (const map of Room360.pictureMaps(o)) {
+                const img = map.image as { width?: number; height?: number } | undefined;
+                // The picture is always upright (a swap only stretches it), so its width runs across the piece.
+                const across = (img?.width ?? 0) * map.repeat.x;
+                if (map !== this.placeholder && !(map as THREE.CanvasTexture).isCanvasTexture && across > 0) texels = Math.max(texels, across);
+            }
         });
         if (!texels) return;
         const ratio = (piece.d.picW * screenPxPerMetre) / texels;
@@ -2269,11 +2325,12 @@ export class Room360 implements OnDestroy {
         if (want === this.pixelated) return;
         this.pixelated = want;
         g.traverse((o) => {
-            const map = ((o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined)?.map;
-            if (!map || map === this.placeholder || (map as THREE.CanvasTexture).isCanvasTexture) return;
-            if (!(map.image as { width?: number } | undefined)?.width) return;
-            map.magFilter = want ? THREE.NearestFilter : THREE.LinearFilter;
-            map.needsUpdate = true;
+            for (const map of Room360.pictureMaps(o)) {
+                if (map === this.placeholder || (map as THREE.CanvasTexture).isCanvasTexture) continue;
+                if (!(map.image as { width?: number } | undefined)?.width) continue;
+                map.magFilter = want ? THREE.NearestFilter : THREE.LinearFilter;
+                map.needsUpdate = true;
+            }
         });
     }
 
@@ -2314,6 +2371,7 @@ export class Room360 implements OnDestroy {
 
     /** Saves a 3840 px wide picture of the current view. */
     saveImage(): void {
+        if (this.gliding) return; // mid-glide draw() draws nothing: the picture would be blank
         const canvas = this.renderer.domElement;
         const w = canvas.clientWidth || 1;
         const h = canvas.clientHeight || 1;
@@ -2392,6 +2450,7 @@ export class Room360 implements OnDestroy {
         this.destroyed = true;
         cancelAnimationFrame(this.frameQueued);
         cancelAnimationFrame(this.animation);
+        cancelAnimationFrame(this.glideFrame);
         this.cleanup.forEach((fn) => fn());
         if (!this.renderer) return;
         disposeTree(this.art);

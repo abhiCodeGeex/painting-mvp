@@ -106,10 +106,12 @@ function supportsWebGL(): boolean {
                 </div>
             }
 
-            @if (view() === 'photo') {
+            <!-- Kept once opened (hidden on other tabs), so the wall photo and its measurements survive a tab switch. -->
+            @if (photoOpened()) {
                 @defer (on immediate) {
                     <wall-photo
                         [class]="photoClass()"
+                        [class.hidden]="view() !== 'photo'"
                         [fill]="fillHeight()"
                         [imageUrl]="imageUrl()"
                         [widthMm]="w()"
@@ -307,6 +309,8 @@ export class WallPreview {
     protected readonly views: View[] = this.webgl ? ['360', 'photo', 'room', 'closeup'] : ['photo', 'room', 'closeup'];
     protected readonly labels = VIEW_LABELS;
     protected view = signal<View>(this.webgl ? '360' : 'room');
+    /** "My wall" stays alive after it is first opened. */
+    protected photoOpened = linkedSignal<View, boolean>({ source: this.view, computation: (v, prev) => v === 'photo' || !!prev?.value });
     protected readonly LoaderCircle = LoaderCircle;
     protected readonly floorMm = 250;
     protected readonly sofaWidth = SOFA_WIDTH;

@@ -236,6 +236,44 @@ describe('portal', function () {
         expect($this->enquiry->lines()->count())->toBe(0);
     });
 
+    it('rejects a split that uses the same moulding as its frame', function () use ($payload) {
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload([
+            'frame_layers' => json_encode([['frame_id' => $this->frameA->id, 'split' => ['frame_id' => $this->frameA->id, 'mode' => 'halves']]]),
+        ]))->assertSessionHasErrors('frame_layers.0.split.frame_id');
+
+        expect($this->enquiry->lines()->count())->toBe(0);
+    });
+
+    it('checks the frame around for size: its opening includes the frame inside', function () use ($payload) {
+        // Picture 600 × 400; frame A (20 mm) makes the opening for the outer frame 640 × 440.
+        $this->frameB->update(['max_inner_width_mm' => 620, 'max_inner_height_mm' => 620]);
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload([
+            'frame_layers' => json_encode([['frame_id' => $this->frameA->id], ['frame_id' => $this->frameB->id]]),
+        ]))->assertSessionHasErrors(['frame_layers.1.frame_id' => 'Gold is not available for this size.']);
+
+        // Directly around the picture (600 × 400) it fits.
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload(['frame_id' => $this->frameB->id]))->assertSessionHasNoErrors();
+    });
+
+    it('keeps a frame and artwork that were deactivated after the line was saved', function () use ($payload) {
+        $layers = [['frame_id' => $this->frameA->id, 'split' => null], ['frame_id' => $this->frameB->id, 'split' => null]];
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload(['frame_layers' => json_encode($layers)]))
+            ->assertSessionHasNoErrors();
+        $line = $this->enquiry->lines()->sole();
+
+        $this->frameB->update(['is_active' => false]);
+        Artwork::whereKey($line->artwork_id)->update(['is_active' => false]);
+
+        // Other changes still save, with the same frames and artwork.
+        $this->post(route('portal.enquiries.lines.update', [$this->enquiry, $line]), $payload(['frame_layers' => json_encode($layers), 'notes' => 'Hang low']))
+            ->assertSessionHasNoErrors();
+        expect($line->fresh()->notes)->toBe('Hang low');
+
+        // But a new line can't pick them.
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload(['frame_layers' => json_encode($layers)]))
+            ->assertSessionHasErrors(['artwork_id', 'frame_layers.1.frame_id']);
+    });
+
     it('prices stacked frames in the live estimate', function () use ($payload) {
         $response = $this->postJson(route('portal.enquiries.estimate', $this->enquiry), $payload([
             'frame_id' => $this->frameA->id,

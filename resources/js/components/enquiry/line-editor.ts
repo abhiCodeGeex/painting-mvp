@@ -449,11 +449,12 @@ function stepOfField(key: string): number {
                                                     } @else {
                                                         <p class="text-muted-foreground text-xs">{{ frameName(layer.frame_id) }}, chosen above.</p>
                                                     }
-                                                    <label class="flex items-center gap-2 text-sm">
+                                                    <label class="flex items-center gap-2 text-sm" [class.opacity-50]="!layer.split && !framesExcept(layer.frame_id).length">
                                                         <input
                                                             type="checkbox"
                                                             class="accent-primary size-4"
                                                             [checked]="!!layer.split"
+                                                            [disabled]="!layer.split && !framesExcept(layer.frame_id).length"
                                                             (change)="toggleSplit(i, $any($event.target).checked)"
                                                         />
                                                         Split this frame (two mouldings)
@@ -470,7 +471,7 @@ function stepOfField(key: string): number {
                                                         <p class="text-muted-foreground text-xs">
                                                             {{ layer.split.mode === 'halves' ? 'Bottom half' : 'Left & right sides' }} in:
                                                         </p>
-                                                        <frame-tiles [frames]="frames()" [selected]="layer.split.frame_id" (picked)="setSplitFrame(i, $event)" />
+                                                        <frame-tiles [frames]="framesExcept(layer.frame_id)" [selected]="layer.split.frame_id" (picked)="setSplitFrame(i, $event)" />
                                                     }
                                                 </div>
                                             }
@@ -685,7 +686,7 @@ function stepOfField(key: string): number {
                                 [heightMm]="pictureH()"
                                 [frame]="parts().frame"
                                 [layers]="parts().layers"
-                                [mat]="d().mat_id && matsAllowed() ? parts().mat : null"
+                                [mat]="hasMat() ? parts().mat : null"
                                 [depthMm]="parts().depthMm"
                                 [edgeStyle]="d().edge_style"
                                 [rotation]="d().source_type === 'catalog' ? d().image_rotation : 0"
@@ -883,6 +884,8 @@ export class LineEditor {
         if (d.medium_id && !this.mediums().some((m) => m.id === d.medium_id)) w.push('The chosen medium is not available for this artwork.');
         if (d.substrate_id && !this.substrates().some((x) => x.id === d.substrate_id)) w.push('The chosen surface does not suit this medium.');
         if (d.frame_id && !this.frames().some((f) => f.id === d.frame_id)) w.push('The chosen frame does not fit this size or surface.');
+        const others = d.frame_id ? d.frame_layers.flatMap((l, i) => [...(i > 0 ? [l.frame_id] : []), ...(l.split ? [l.split.frame_id] : [])]) : [];
+        if (others.some((id) => !this.frames().some((f) => f.id === id))) w.push('One of the extra frames does not fit this size or surface.');
         if (d.glazing_id && !this.glazings().some((g) => g.id === d.glazing_id))
             w.push('The chosen glazing is not available for this size or surface.');
         if (d.mat_id && !this.matsAllowed()) w.push(`${s?.name} cannot have a mat.`);
@@ -970,14 +973,16 @@ export class LineEditor {
     });
     protected parts = computed(() => previewParts(this.options(), this.d()));
     // With "outer size", the picture is what's left inside the mat and frame.
-    private surround = computed(
-        () => 2 * (framesWidth(this.parts().frame, this.parts().layers) + (this.d().mat_id && this.matsAllowed() ? (this.parts().mat?.border_mm ?? 0) : 0)),
-    );
+    /** A mat is drawn, sized and sent only with a frame (or frame advice), on a surface that allows one. */
+    protected hasMat = computed(() => !!this.d().mat_id && this.matsAllowed() && !this.unframed());
+    private surround = computed(() => 2 * (framesWidth(this.parts().frame, this.parts().layers) + (this.hasMat() ? (this.parts().mat?.border_mm ?? 0) : 0)));
     protected pictureW = computed(() =>
         this.d().size_reference === 'outer' ? Math.max(50, this.d().width_mm - this.surround()) : this.d().width_mm,
     );
     protected pictureH = computed(() =>
-        this.d().size_reference === 'outer' ? Math.max(50, this.d().height_mm - this.surround()) : this.d().height_mm,
+        this.d().size_reference === 'outer'
+            ? Math.max(50, this.d().height_mm - this.surround() - (this.hasMat() ? (this.parts().mat?.bottom_weight_mm ?? 0) : 0))
+            : this.d().height_mm,
     );
 
     // ---- live price (calculated on the server) ----
@@ -999,8 +1004,8 @@ export class LineEditor {
                 frame_id: d.frame_id,
                 frame_layers: d.frame_id ? d.frame_layers : [],
                 frame_advice_requested: d.frame_advice_requested,
-                mat_id: this.matsAllowed() ? d.mat_id : null,
-                mat_border_mm: d.mat_id ? d.mat_border_mm : null,
+                mat_id: this.hasMat() ? d.mat_id : null,
+                mat_border_mm: this.hasMat() ? d.mat_border_mm : null,
                 glazing_id: d.glazing_id,
                 finishing_ids: d.finishing_ids,
                 own: { service: d.own?.service },
@@ -1042,9 +1047,12 @@ export class LineEditor {
 
         // Object URL for a freshly picked image (own artwork photo / first reference).
         let url: string | null = null;
-        effect(() => {
+        const picked = computed(() => {
             const d = this.d();
-            const file = d.source_type === 'own_artwork' ? d.artwork_photo : d.source_type === 'custom_creation' ? (d.references?.[0] ?? null) : null;
+            return d.source_type === 'own_artwork' ? d.artwork_photo : d.source_type === 'custom_creation' ? (d.references?.[0] ?? null) : null;
+        });
+        effect(() => {
+            const file = picked(); // reruns only when the File itself changes
             if (url) URL.revokeObjectURL(url);
             url = file && file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
             this.objectUrl.set(url);
@@ -1085,13 +1093,15 @@ export class LineEditor {
     applyTier(id: number): void {
         const tier = this.options().quality_tiers.find((t) => t.id === id);
         if (!tier) return;
+        // No frame (and no frame advice) means no glass and no mat: the tier's defaults apply once framed.
+        const unframed = this.unframed();
         this.form.update((d) => ({
             ...d,
             quality_tier_id: id,
             medium_id: tier.default_medium_id ?? d.medium_id,
             substrate_id: tier.default_substrate_id ?? d.substrate_id,
-            glazing_id: tier.default_glazing_id ?? d.glazing_id,
-            mat_id: tier.default_mat_id ?? d.mat_id,
+            glazing_id: unframed ? d.glazing_id : (tier.default_glazing_id ?? d.glazing_id),
+            mat_id: unframed ? null : (tier.default_mat_id ?? d.mat_id),
         }));
     }
 
@@ -1127,7 +1137,9 @@ export class LineEditor {
             ...d,
             frame_id: id,
             // The picker above is the inner frame: frames around it (and its split) stay; no frame / advice clears them all.
-            frame_layers: id ? [{ frame_id: id, split: d.frame_layers[0]?.split ?? null }, ...d.frame_layers.slice(1)] : [],
+            frame_layers: id
+                ? [{ frame_id: id, split: d.frame_layers[0]?.split && d.frame_layers[0].split.frame_id !== id ? d.frame_layers[0].split : null }, ...d.frame_layers.slice(1)]
+                : [],
             frame_advice_requested: advice,
             // Without a frame there is no glass or mat; picking a frame again brings the tier's glass back.
             mat_id: unframed ? null : d.mat_id,
@@ -1193,16 +1205,22 @@ export class LineEditor {
     }
 
     setLayerFrame(i: number, id: number): void {
-        this.setLayers((layers) => layers.map((l, j) => (j === i ? { ...l, frame_id: id } : l)));
+        // Picking the split's moulding as the layer's own frame drops the split (it would be one moulding).
+        this.setLayers((layers) => layers.map((l, j) => (j === i ? { ...l, frame_id: id, split: l.split && l.split.frame_id !== id ? l.split : null } : l)));
+    }
+
+    /** The frames a split can use: any that fits except the moulding being split. */
+    protected framesExcept(id: number): CatalogOptions['frames'] {
+        return this.frames().filter((f) => f.id !== id);
     }
 
     toggleSplit(i: number, on: boolean): void {
-        // Start the second moulding on a different frame than the first, so the split is visible at once.
-        const other = (id: number) => this.frames().find((f) => f.id !== id)?.id ?? id;
+        // The second moulding starts on a different frame than the first, so the split is visible at once.
+        const layer = this.d().frame_layers[i];
+        const other = layer ? this.framesExcept(layer.frame_id)[0]?.id : undefined;
+        if (on && !other) return;
         this.setLayers((layers) =>
-            layers.map((l, j) =>
-                j === i ? { ...l, split: on ? { frame_id: other(l.frame_id), mode: 'top_bottom_sides' as FrameSplitMode } : null } : l,
-            ),
+            layers.map((l, j) => (j === i ? { ...l, split: on && other ? { frame_id: other, mode: 'top_bottom_sides' as FrameSplitMode } : null } : l)),
         );
     }
 
@@ -1241,8 +1259,13 @@ export class LineEditor {
             width_mm: unturnedSize(d)[0],
             height_mm: unturnedSize(d)[1],
             image_rotation: d.source_type === 'catalog' ? d.image_rotation : 0,
-            mat_id: matsAllowed ? d.mat_id : null,
+            mat_id: matsAllowed && (d.frame_id || d.frame_advice_requested) ? d.mat_id : null,
             frame_advice_requested: d.frame_id ? false : d.frame_advice_requested,
+            // Only the files (and catalogue artwork) of the chosen kind of artwork go up.
+            artwork_id: d.source_type === 'catalog' ? d.artwork_id : null,
+            references: d.source_type === 'custom_creation' ? d.references : [],
+            artwork_photo: d.source_type === 'own_artwork' ? d.artwork_photo : null,
+            hi_res: d.source_type === 'own_artwork' && d.own.service === 'reproduce_and_frame' ? d.hi_res : null,
             // Multipart form: the layers go as JSON text (the server decodes it). Empty without a frame.
             frame_layers: d.frame_id && d.frame_layers.length ? JSON.stringify(d.frame_layers) : '',
             // An edge style only for a surface that offers it.

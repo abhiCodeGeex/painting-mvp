@@ -37,10 +37,17 @@ class EnquiryLineRequest extends FormRequest
         $isCustom = $source === LineSource::CustomCreation->value;
         $isOwn = $source === LineSource::OwnArtwork->value;
         $image = ['file', 'max:20480', 'mimes:jpg,jpeg,png,webp,heic,pdf'];
+        // A frame or artwork already on this line stays valid after staff deactivate it, so the customer
+        // can still save other changes; new choices must be active.
+        $keepFrames = $existing ? FrameLayers::frameIds($existing->frameLayers()) : [];
+        $activeFrame = Rule::exists('frames', 'id')->whereNull('deleted_at')
+            ->where(fn ($q) => $q->where('is_active', true)->orWhereIn('id', $keepFrames ?: [0]));
+        $activeArtwork = Rule::exists('artworks', 'id')->whereNull('deleted_at')
+            ->where(fn ($q) => $q->where('is_active', true)->orWhere('id', $existing?->artwork_id ?? 0));
 
         return [
             'source_type' => ['required', Rule::enum(LineSource::class)],
-            'artwork_id' => [Rule::requiredIf($isCatalog), 'nullable', Rule::exists('artworks', 'id')->where('is_active', true)->whereNull('deleted_at')],
+            'artwork_id' => $isCatalog ? ['required', $activeArtwork] : ['exclude'],
             'title' => ['nullable', 'string', 'max:255'],
 
             'brief.description' => [Rule::requiredIf($isCustom), 'nullable', 'string', 'max:5000'],
@@ -77,7 +84,7 @@ class EnquiryLineRequest extends FormRequest
             'frame_advice_requested' => ['boolean'],
             // Stacked frames, innermost first; any layer may be split between two mouldings.
             'frame_layers' => ['nullable', 'array', 'max:'.FrameLayers::MAX],
-            'frame_layers.*.frame_id' => ['required', 'integer', $activeFrame = Rule::exists('frames', 'id')->where('is_active', true)->whereNull('deleted_at')],
+            'frame_layers.*.frame_id' => ['required', 'integer', $activeFrame],
             'frame_layers.*.split' => ['nullable', 'array'],
             'frame_layers.*.split.frame_id' => ['required_with:frame_layers.*.split', 'integer', $activeFrame],
             'frame_layers.*.split.mode' => ['required_with:frame_layers.*.split', Rule::in(FrameLayers::MODES)],
@@ -155,6 +162,12 @@ class EnquiryLineRequest extends FormRequest
                 $keptReferences = $existing
                     ? $existing->getMedia('references')->reject(fn ($m) => in_array($m->id, $this->input('remove_media', [])))->count()
                     : 0;
+                foreach ($this->input('frame_layers') ?? [] as $i => $layer) {
+                    if (is_array($layer) && (int) ($layer['split']['frame_id'] ?? 0) === (int) ($layer['frame_id'] ?? -1)) {
+                        $validator->errors()->add("frame_layers.$i.split.frame_id", 'Choose a different moulding for the split.');
+                    }
+                }
+
                 if ($isCustom && $keptReferences + count($this->file('references', [])) === 0) {
                     $validator->errors()->add('references', 'Add at least one sketch or reference image.');
                 }

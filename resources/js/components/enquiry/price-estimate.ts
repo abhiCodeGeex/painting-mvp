@@ -24,7 +24,14 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     effect(() => {
-        if (!enabled()) return;
+        if (!enabled()) {
+            // Closed: no request after the fact, and the next line doesn't open on this line's price.
+            if (timer) clearTimeout(timer);
+            controller?.abort();
+            estimate.set(null);
+            loading.set(false);
+            return;
+        }
         const body = JSON.stringify(payload());
         const id = enquiryId();
         if (timer) clearTimeout(timer);
@@ -143,8 +150,13 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                             </li>
                         </ul>
                     }
-                    @if (est.pending?.length) {
-                        <p class="text-muted-foreground mt-2 text-xs">Not included yet: {{ pendingText(est) }}.</p>
+                    @if (pendingText(est); as pending) {
+                        <p class="text-muted-foreground mt-2 text-xs">Not included yet: {{ pending }}.</p>
+                    }
+                    @if (artistPending(est)) {
+                        <p class="text-muted-foreground mt-2 text-xs">
+                            Includes the range of our artists' fees; we confirm your artist in the quotation.
+                        </p>
                     }
                 }
 
@@ -172,8 +184,18 @@ export class PriceEstimateBox {
     protected readonly inr = formatInr;
     protected readonly range = formatInrRange;
 
+    /** Our team picks the artist for a new creation; the estimate already spans our artists' fees. */
+    private static readonly ARTIST = 'Choose an artist';
+
     protected pendingText(est: LineEstimate): string {
-        return (est.pending ?? []).join(', ').toLowerCase();
+        return (est.pending ?? [])
+            .filter((p) => p !== PriceEstimateBox.ARTIST)
+            .join(', ')
+            .toLowerCase();
+    }
+
+    protected artistPending(est: LineEstimate): boolean {
+        return (est.pending ?? []).includes(PriceEstimateBox.ARTIST);
     }
 }
 

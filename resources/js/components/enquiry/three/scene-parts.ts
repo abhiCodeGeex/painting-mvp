@@ -232,7 +232,10 @@ export function buildArtwork(
         rotation?: number;
     },
 ): THREE.Group {
-    const { frame, mat, glazing, depthMm, edgeStyle, texture } = opts;
+    const { mat, glazing, depthMm, edgeStyle, texture } = opts;
+    // The innermost frame; if its moulding is no longer in the catalogue, the next layer takes its place
+    // (the width is reserved for the layers either way).
+    const frame = opts.frame ?? opts.layers?.[0]?.frame ?? null;
     const rotation = opts.rotation ?? 0;
     const group = new THREE.Group();
     const frameDepth = frame ? M(Math.max(15, frame.depth_mm ?? 25)) : 0;
@@ -282,6 +285,7 @@ export function buildArtwork(
             new THREE.MeshStandardMaterial({ color: '#cfc8bd' }),
         ];
         const block = new THREE.Mesh(rotateUvs(new THREE.BoxGeometry(d.picW, d.picH, canvasDepth), rotation), materials);
+        block.name = 'picture';
         block.position.set(0, picY, faceZ - canvasDepth / 2);
         block.castShadow = true;
         block.receiveShadow = false;
@@ -291,6 +295,7 @@ export function buildArtwork(
             rotateUvs(new THREE.PlaneGeometry(d.picW, d.picH), rotation),
             artworkMaterial({ map: texture, roughness: 0.8 }),
         );
+        picture.name = 'picture';
         picture.position.set(0, picY, faceZ);
         // No shadow-map on the print itself: a flat plane a few mm in front of the wall gets shadow
         // "acne" (fine stripes) at grazing sun angles. The frame's shade comes from the contact shadows.
