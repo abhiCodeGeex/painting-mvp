@@ -34,6 +34,9 @@ class WorkChargeResource extends MasterResource
 
     protected static ?int $navigationSort = 25;
 
+    /** Not used on quotes any more (labour per piece covers it): kept for its data, hidden from the menu. */
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static ?string $recordTitleAttribute = 'name';
 
     public static function form(Schema $schema): Schema

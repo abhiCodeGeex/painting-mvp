@@ -155,7 +155,7 @@ class EnquiryPresenter
      *
      * @return array<string, mixed>
      */
-    public static function quote(Quote $quote): array
+    public static function quote(Quote $quote, ?int $latestVersion = null): array
     {
         return [
             'id' => $quote->id,
@@ -164,7 +164,8 @@ class EnquiryPresenter
             'status' => $quote->status->value,
             'status_label' => $quote->status->getLabel(),
             'status_color' => $quote->status->getColor(),
-            'is_current' => $quote->status !== QuoteStatus::Superseded,
+            // Only the newest version is current (an expired or rejected v1 stays as history once v2 is sent).
+            'is_current' => $quote->status !== QuoteStatus::Superseded && ($latestVersion === null || $quote->version >= $latestVersion),
             'issue_date' => $quote->issue_date?->toDateString(),
             'valid_until' => $quote->valid_until?->toDateString(),
             'lead_time' => $quote->lead_time,

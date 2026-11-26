@@ -43,7 +43,7 @@ class QuoteResponder
                     $line->saveQuietly();
                 }
             }
-            $this->builder->recalculate($quote);
+            $this->builder->recalculate($quote, keepTax: true);
 
             $quote->fill([
                 'status' => QuoteStatus::Approved,

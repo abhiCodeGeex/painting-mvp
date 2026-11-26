@@ -2,6 +2,7 @@ import { InertiaForm } from '@/inertia/form';
 import { fits, mmToUnit, unitToMm } from '@/lib/units';
 import type { CatalogArtwork, CatalogOptions, EnquiryLine, FrameLayerInput, FrameSplitMode } from '@/types/portal';
 import { UiCheckbox } from '@/ui/checkbox';
+import { Confirm } from '@/ui/confirm';
 import { UiDialog } from '@/ui/dialog';
 import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
@@ -23,7 +24,7 @@ import {
 import { ArrowLeft, ArrowRight, Brush, Check, Frame as FrameIcon, Images, LoaderCircle, TriangleAlert } from 'lucide';
 import { CatalogPicker, ChoiceRow, FileGallery, FrameTiles, PaletteInput, SizeFields } from './editor-parts';
 import { initialLineForm, type LineForm } from './line-form';
-import { framesWidth, previewParts } from './preview-helpers';
+import { framesWidth, layerWidth, previewParts } from './preview-helpers';
 import { liveEstimate, PriceEstimateBox } from './price-estimate';
 import { WallPreview } from './wall-preview';
 
@@ -139,10 +140,12 @@ function stepOfField(key: string): number {
 
                 <form class="flex min-h-0 flex-1 flex-col" (submit)="submit($event)" (keydown.enter)="enterNext($event)">
                     <!-- One scroll area on small screens; on large screens each column scrolls on its own and the preview stays put. -->
-                    <div [class]="'min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-12 lg:overflow-hidden ' + thinScroll">
+                    <div #scrollArea [class]="'min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-12 lg:overflow-hidden ' + thinScroll">
                         <!-- left: the form -->
                         <div
                             #stepPane
+                            tabindex="-1"
+                            style="outline: none"
                             [class]="'space-y-6 px-5 py-5 sm:px-6 lg:col-span-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain ' + thinScroll"
                         >
                             @if (step() === 1) {
@@ -162,7 +165,7 @@ function stepOfField(key: string): number {
                                                         ? 'bg-background shadow-sm'
                                                         : 'text-muted-foreground hover:text-foreground')
                                                 "
-                                                (click)="form.set('source_type', s.value)"
+                                                (click)="chooseSource(s.value)"
                                             >
                                                 <svg [icon]="s.icon" class="size-4 shrink-0" />
                                                 <span class="text-center">{{ s.short }}</span>
@@ -397,7 +400,7 @@ function stepOfField(key: string): number {
                                         (top &amp; bottom / sides, or top half / bottom half), and <strong>+ Add a frame around</strong> stacks up to 3.
                                     </p>
                                     <div class="grid gap-1.5">
-                                        <frame-tiles [frames]="frames()" [selected]="d().frame_id" (picked)="setFrame($event, false)">
+                                        <frame-tiles [frames]="frames()" [selected]="d().frame_id" [imageUrl]="previewImage()" [ratio]="pictureW() / pictureH()" (picked)="setFrame($event, false)">
                                             <button
                                                 type="button"
                                                 [class]="tile(!d().frame_id && !d().frame_advice_requested)"
@@ -405,8 +408,8 @@ function stepOfField(key: string): number {
                                             >
                                                 <span class="flex h-11 items-center justify-center">
                                                     <span
-                                                        class="block h-10 w-7 rounded-sm"
-                                                        style="background: linear-gradient(135deg, #f6d365, #a1c4fd)"
+                                                        class="block h-10 w-7 rounded-sm bg-cover bg-center"
+                                                        [style.background-image]="previewImage() ? 'url(' + previewImage() + ')' : 'linear-gradient(135deg, #f6d365, #a1c4fd)'"
                                                     ></span>
                                                 </span>
                                                 <span class="text-xs leading-tight font-medium">No frame</span>
@@ -445,16 +448,16 @@ function stepOfField(key: string): number {
                                                         }
                                                     </div>
                                                     @if (i > 0) {
-                                                        <frame-tiles [frames]="frames()" [selected]="layer.frame_id" (picked)="setLayerFrame(i, $event)" />
+                                                        <frame-tiles [frames]="framesFor(i)" [selected]="layer.frame_id" [imageUrl]="previewImage()" [ratio]="pictureW() / pictureH()" (picked)="setLayerFrame(i, $event)" />
                                                     } @else {
                                                         <p class="text-muted-foreground text-xs">{{ frameName(layer.frame_id) }}, chosen above.</p>
                                                     }
-                                                    <label class="flex items-center gap-2 text-sm" [class.opacity-50]="!layer.split && !framesExcept(layer.frame_id).length">
+                                                    <label class="flex items-center gap-2 text-sm" [class.opacity-50]="!layer.split && !framesExcept(layer.frame_id, i).length">
                                                         <input
                                                             type="checkbox"
                                                             class="accent-primary size-4"
                                                             [checked]="!!layer.split"
-                                                            [disabled]="!layer.split && !framesExcept(layer.frame_id).length"
+                                                            [disabled]="!layer.split && !framesExcept(layer.frame_id, i).length"
                                                             (change)="toggleSplit(i, $any($event.target).checked)"
                                                         />
                                                         Split this frame (two mouldings)
@@ -471,7 +474,7 @@ function stepOfField(key: string): number {
                                                         <p class="text-muted-foreground text-xs">
                                                             {{ layer.split.mode === 'halves' ? 'Bottom half' : 'Left & right sides' }} in:
                                                         </p>
-                                                        <frame-tiles [frames]="framesExcept(layer.frame_id)" [selected]="layer.split.frame_id" (picked)="setSplitFrame(i, $event)" />
+                                                        <frame-tiles [frames]="framesExcept(layer.frame_id, i)" [selected]="layer.split.frame_id" [imageUrl]="previewImage()" [ratio]="pictureW() / pictureH()" (picked)="setSplitFrame(i, $event)" />
                                                     }
                                                 </div>
                                             }
@@ -686,6 +689,8 @@ function stepOfField(key: string): number {
                                 [heightMm]="pictureH()"
                                 [frame]="parts().frame"
                                 [layers]="parts().layers"
+                                [rebateMm]="rebate()"
+                                [title]="previewTitle()"
                                 [mat]="hasMat() ? parts().mat : null"
                                 [depthMm]="parts().depthMm"
                                 [edgeStyle]="d().edge_style"
@@ -784,6 +789,7 @@ export class LineEditor {
     protected step = signal(1);
     private visited = signal<Set<number>>(new Set([1]));
     private stepPane = viewChild<ElementRef<HTMLElement>>('stepPane');
+    private scrollArea = viewChild<ElementRef<HTMLElement>>('scrollArea');
     protected steps = computed(() => {
         const errors = Object.keys(this.form.errors());
         const visited = this.visited();
@@ -809,7 +815,15 @@ export class LineEditor {
         const next = Math.min(5, Math.max(1, n));
         this.step.set(next);
         this.visited.update((v) => new Set(v).add(next));
+        // Phones scroll the whole dialog body, large screens the form column: both back to the top.
+        this.scrollArea()?.nativeElement.scrollTo({ top: 0 });
         this.stepPane()?.nativeElement.scrollTo({ top: 0 });
+        // The button that was pressed can disappear with the step (Back on step 2, Next on step 4):
+        // keep keyboard focus inside the dialog instead of falling to the page behind it.
+        setTimeout(() => {
+            const a = document.activeElement;
+            if (!a || a === document.body || !a.isConnected) this.stepPane()?.nativeElement.focus({ preventScroll: true });
+        });
     }
 
     protected matSummary = computed(() => {
@@ -847,15 +861,25 @@ export class LineEditor {
         const d = this.d();
         return d.mat_id ? (d.mat_border_mm ?? this.options().mats.find((m) => m.id === d.mat_id)?.default_border_mm ?? 0) : 0;
     });
-    protected frames = computed(() => {
+    /** Frames that suit the surface and fit around the picture + mat (the inner frame). */
+    protected frames = computed(() => this.framesFor(0));
+
+    /**
+     * Frames for layer i: they must fit around everything inside them — picture, mat, the rebate allowance
+     * and the frames of layers 0…i-1 (as the server checks it).
+     */
+    protected framesFor(i: number): CatalogOptions['frames'] {
         const d = this.d();
-        const b = this.matBorder();
+        const b = this.hasMat() ? this.matBorder() : 0;
+        const bottom = this.hasMat() ? (this.parts().mat?.bottom_weight_mm ?? 0) : 0;
+        const inside = this.parts().layers.slice(0, i).reduce((sum, l) => sum + layerWidth(l), 0);
+        const add = 2 * (b + this.rebate() + inside);
         return this.options().frames.filter(
             (f) =>
                 (!f.substrate_ids.length || (d.substrate_id !== null && f.substrate_ids.includes(d.substrate_id))) &&
-                fits(d.width_mm + 2 * b, d.height_mm + 2 * b, f.max_inner_width_mm, f.max_inner_height_mm),
+                fits(this.pictureW() + add, this.pictureH() + add + bottom, f.max_inner_width_mm, f.max_inner_height_mm),
         );
-    });
+    }
     protected glazings = computed(() => {
         const s = this.substrate();
         const area = (this.d().width_mm / 1000) * (this.d().height_mm / 1000);
@@ -881,11 +905,23 @@ export class LineEditor {
         const d = this.d();
         const s = this.substrate();
         const w: string[] = [];
+        // Said as they type, not only when saving (the preview can't show a size outside these).
+        const sides = [d.width_mm, d.height_mm];
+        if (sides.some((mm) => !mm || mm < 50)) w.push(d.unit === 'cm' ? 'The minimum size is 5 cm.' : 'The minimum size is 2 in.');
+        if (sides.some((mm) => mm > 6000)) w.push(d.unit === 'cm' ? 'The maximum size is 600 cm.' : 'The maximum size is 236 in.');
+        const photo = d.source_type === 'own_artwork' ? d.artwork_photo : null;
+        if (photo && (/heic|heif/i.test(photo.type) || /\.(heic|heif)$/i.test(photo.name)))
+            w.push('Your photo is in HEIC format: we receive it fine, but it can’t be previewed here. For a preview, use a JPEG or PNG.');
         if (d.medium_id && !this.mediums().some((m) => m.id === d.medium_id)) w.push('The chosen medium is not available for this artwork.');
         if (d.substrate_id && !this.substrates().some((x) => x.id === d.substrate_id)) w.push('The chosen surface does not suit this medium.');
         if (d.frame_id && !this.frames().some((f) => f.id === d.frame_id)) w.push('The chosen frame does not fit this size or surface.');
-        const others = d.frame_id ? d.frame_layers.flatMap((l, i) => [...(i > 0 ? [l.frame_id] : []), ...(l.split ? [l.split.frame_id] : [])]) : [];
-        if (others.some((id) => !this.frames().some((f) => f.id === id))) w.push('One of the extra frames does not fit this size or surface.');
+        const misfit = d.frame_id
+            ? d.frame_layers.some((l, i) => {
+                  const fitting = this.framesFor(i);
+                  return (i > 0 && !fitting.some((f) => f.id === l.frame_id)) || (!!l.split && !fitting.some((f) => f.id === l.split!.frame_id));
+              })
+            : false;
+        if (misfit) w.push('One of the extra frames does not fit this size or surface.');
         if (d.glazing_id && !this.glazings().some((g) => g.id === d.glazing_id))
             w.push('The chosen glazing is not available for this size or surface.');
         if (d.mat_id && !this.matsAllowed()) w.push(`${s?.name} cannot have a mat.`);
@@ -938,12 +974,31 @@ export class LineEditor {
     private serialise(): string {
         return JSON.stringify(this.d(), (_k, v) => (v instanceof File ? `file:${v.name}:${v.size}` : v));
     }
-    protected confirmClose = (): boolean =>
-        this.form.processing() || this.serialise() === this.snapshot || window.confirm('Discard the changes to this artwork?');
+    private confirm = inject(Confirm);
+    /**
+     * Closing with unsaved changes asks first (in the app's own dialog). Returns true when it can close now;
+     * otherwise it asks and closes once the customer agrees.
+     */
+    protected confirmClose = (): boolean => {
+        if (this.form.processing() || this.serialise() === this.snapshot) return true;
+        void this.confirm
+            .ask({ title: 'Discard your changes?', message: 'The changes to this artwork are not saved yet.', confirm: 'Discard', cancel: 'Keep editing', destructive: true })
+            .then((ok) => {
+                if (!ok) return;
+                this.snapshot = this.serialise();
+                this.open.set(false);
+            });
+        return false;
+    };
 
     /** Enter in a field moves to the next step instead of saving the whole form (Enter on step 5 saves). */
     protected enterNext(event: Event): void {
         const target = event.target as HTMLElement;
+        // The previews' own fields (wall photo measurements…) handle Enter themselves: never a step change or a save.
+        if (target.closest('wall-preview')) {
+            event.preventDefault();
+            return;
+        }
         if (target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || this.step() >= 5) return;
         event.preventDefault();
         // Commit the field being typed in (sizes apply on change/blur) before its step goes away.
@@ -963,6 +1018,11 @@ export class LineEditor {
     /** The original picture for the full-page viewer: the catalogue original, or the customer's own upload. */
     protected fullImage = computed(() => (this.d().source_type === 'catalog' ? (this.artwork()?.image_full ?? null) : this.previewImage()));
     protected detailImage = computed(() => (this.d().source_type === 'catalog' ? (this.artwork()?.image_detail ?? null) : null));
+    /** The name shown on the full-size viewer: the painting's title, or the customer's own title. */
+    protected previewTitle = computed(() => {
+        const d = this.d();
+        return (d.source_type === 'catalog' ? this.artwork()?.title : d.title) || 'Your artwork';
+    });
     protected previewImage = computed(() => {
         const d = this.d();
         if (d.source_type === 'catalog') return this.artwork()?.image ?? null;
@@ -975,7 +1035,11 @@ export class LineEditor {
     // With "outer size", the picture is what's left inside the mat and frame.
     /** A mat is drawn, sized and sent only with a frame (or frame advice), on a surface that allows one. */
     protected hasMat = computed(() => !!this.d().mat_id && this.matsAllowed() && !this.unframed());
-    private surround = computed(() => 2 * (framesWidth(this.parts().frame, this.parts().layers) + (this.hasMat() ? (this.parts().mat?.border_mm ?? 0) : 0)));
+    /** The rebate gap around the mat/picture when framed (pricing counts it in the outer size). */
+    protected rebate = computed(() => (this.parts().layers.length ? (this.options().rebate_allowance_mm ?? 0) : 0));
+    private surround = computed(
+        () => 2 * (framesWidth(this.parts().frame, this.parts().layers) + this.rebate() + (this.hasMat() ? (this.parts().mat?.border_mm ?? 0) : 0)),
+    );
     protected pictureW = computed(() =>
         this.d().size_reference === 'outer' ? Math.max(50, this.d().width_mm - this.surround()) : this.d().width_mm,
     );
@@ -1084,6 +1148,8 @@ export class LineEditor {
             ...d,
             artwork_id: a.id,
             image_rotation: 0,
+            // Listed sizes are picture sizes: no outer size for a fixed-size artwork.
+            size_reference: a.allow_custom_size ? d.size_reference : 'image',
             width_mm: size?.width_mm ?? d.width_mm,
             height_mm: size?.height_mm ?? d.height_mm,
             medium_id: a.default_medium_id ?? d.medium_id,
@@ -1118,6 +1184,18 @@ export class LineEditor {
                 .filter(Boolean)
                 .slice(0, 10),
         );
+    }
+
+    /**
+     * The kind of artwork. "My artwork" is about framing the customer's piece: with no frame chosen yet it starts
+     * on "Advise me" (we suggest one), instead of the save stopping later on a surface that must be framed.
+     */
+    chooseSource(value: LineForm['source_type']): void {
+        this.form.update((d) => ({
+            ...d,
+            source_type: value,
+            frame_advice_requested: value === 'own_artwork' && !d.frame_id ? true : d.frame_advice_requested,
+        }));
     }
 
     setOwn(key: 'service' | 'condition_notes', value: string): void {
@@ -1210,14 +1288,14 @@ export class LineEditor {
     }
 
     /** The frames a split can use: any that fits except the moulding being split. */
-    protected framesExcept(id: number): CatalogOptions['frames'] {
-        return this.frames().filter((f) => f.id !== id);
+    protected framesExcept(id: number, layer = 0): CatalogOptions['frames'] {
+        return this.framesFor(layer).filter((f) => f.id !== id);
     }
 
     toggleSplit(i: number, on: boolean): void {
         // The second moulding starts on a different frame than the first, so the split is visible at once.
         const layer = this.d().frame_layers[i];
-        const other = layer ? this.framesExcept(layer.frame_id)[0]?.id : undefined;
+        const other = layer ? this.framesExcept(layer.frame_id, i)[0]?.id : undefined;
         if (on && !other) return;
         this.setLayers((layers) =>
             layers.map((l, j) => (j === i ? { ...l, split: on && other ? { frame_id: other, mode: 'top_bottom_sides' as FrameSplitMode } : null } : l)),

@@ -463,6 +463,18 @@ export function dropShadowTexture(w: number, h: number, spread: number): THREE.T
 }
 
 /** Colourful placeholder used until an image is chosen. */
+/** A one-colour texture (e.g. the card shown while a picture downloads). */
+export function plainTexture(colour: string): THREE.Texture {
+    const c = document.createElement('canvas');
+    c.width = c.height = 4;
+    const g = c.getContext('2d')!;
+    g.fillStyle = colour;
+    g.fillRect(0, 0, 4, 4);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+}
+
 export function gradientTexture(): THREE.Texture {
     const c = document.createElement('canvas');
     c.width = 256;

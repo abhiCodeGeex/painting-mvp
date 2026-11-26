@@ -133,7 +133,11 @@ class QuoteBuilder
     }
 
     /** Line totals, extras, discount, GST and grand total (spec §7.3). */
-    public function recalculate(Quote $quote): Quote
+    /**
+     * @param  bool  $keepTax  keep the sent quote's tax rate and place of supply (a customer approving the
+     *                         quote they saw must not get today's rate or a since-changed address)
+     */
+    public function recalculate(Quote $quote, bool $keepTax = false): Quote
     {
         $quote->load(['lines', 'extras', 'enquiry.deliveryAddress.state', 'enquiry.customer']);
 
@@ -154,8 +158,14 @@ class QuoteBuilder
             ? (int) round(($items + $extras) * (float) $quote->discount_percent / 100)
             : min((int) $quote->discount_amount, $items + $extras);
 
-        $state = $quote->enquiry->deliveryAddress?->state?->gst_code;
-        $gst = $this->gst->calculate($items + $extras - $discount, $state, (bool) $quote->enquiry->customer?->tax_exempt);
+        $taxable = $items + $extras - $discount;
+        if ($keepTax) {
+            $state = $quote->place_of_supply;
+            $gst = $this->gst->calculate($taxable, $state, false, (float) $quote->tax_rate);
+        } else {
+            $state = $quote->enquiry->deliveryAddress?->state?->gst_code;
+            $gst = $this->gst->calculate($taxable, $state, (bool) $quote->enquiry->customer?->tax_exempt);
+        }
 
         $quote->fill([
             'items_total' => $items,
@@ -193,6 +203,9 @@ class QuoteBuilder
         if ($channels === []) {
             throw ValidationException::withMessages(['channels' => 'Choose at least one way to send the quote.']);
         }
+        if ($problems = $this->unfinishedLines($quote)) {
+            throw ValidationException::withMessages(['lines' => $problems]);
+        }
 
         $enquiry = $quote->enquiry;
         $customer = $enquiry->customer;
@@ -200,7 +213,7 @@ class QuoteBuilder
         DB::transaction(function () use ($quote, $by, $channels, $enquiry, $customer): void {
             $this->recalculate($quote);
 
-            $enquiry->quotes()->whereKeyNot($quote->id)->whereIn('status', [QuoteStatus::Sent, QuoteStatus::Viewed, QuoteStatus::ChangesRequested])
+            $enquiry->quotes()->whereKeyNot($quote->id)->whereIn('status', [QuoteStatus::Sent, QuoteStatus::Viewed, QuoteStatus::ChangesRequested, QuoteStatus::Expired])
                 ->update(['status' => QuoteStatus::Superseded]);
 
             $address = $enquiry->deliveryAddress;
@@ -251,6 +264,35 @@ class QuoteBuilder
             'quote' => $quote,
             'whatsapp_url' => in_array('whatsapp', $channels, true) ? $this->whatsappUrl($quote, $body) : null,
         ];
+    }
+
+    /**
+     * Lines the customer would see with no price, or with a price the engine could not finish (e.g. a
+     * new creation with no artist yet). A price staff typed themselves counts as finished: they may
+     * knowingly quote a figure while a detail such as the frame is still to be advised.
+     *
+     * @return list<string> one plain-language message per unfinished line
+     */
+    public function unfinishedLines(Quote $quote): array
+    {
+        $problems = [];
+        foreach ($quote->lines()->orderBy('position')->get() as $line) {
+            if (! $line->counts()) {
+                continue;
+            }
+            $label = 'Line '.$line->position.($line->title ? ' “'.$line->title.'”' : '');
+            $pending = array_values(array_filter((array) ($line->breakdown['pending'] ?? [])));
+            $typedOwnPrice = (int) $line->unit_price !== (int) $line->calculated_unit_price;
+
+            if ($pending !== [] && ! $typedOwnPrice) {
+                $todo = lcfirst(implode(', ', $pending));
+                $problems[] = "{$label} is not finished: {$todo} (or type the price yourself).";
+            } elseif ((int) $line->unit_price <= 0) {
+                $problems[] = "{$label} has no price yet. Type a unit price before sending.";
+            }
+        }
+
+        return $problems;
     }
 
     public function renderPdf(Quote $quote): string

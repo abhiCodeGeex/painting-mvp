@@ -23,6 +23,10 @@ services:
     <<: *app
     ports:
       - "8090:8000"
+    environment:
+      # "artisan serve" handles one request at a time by default: the editor's live estimate, image
+      # thumbnails and page loads then queue behind each other. Several workers serve them in parallel.
+      PHP_CLI_SERVER_WORKERS: "6"
 
   vite:
     <<: *app

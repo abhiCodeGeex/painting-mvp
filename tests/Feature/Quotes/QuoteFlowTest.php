@@ -5,6 +5,7 @@ use App\Domain\Quotes\QuoteBuilder;
 use App\Enums\EnquiryStatus;
 use App\Enums\QuoteStatus;
 use App\Enums\Role;
+use App\Filament\Resources\Pricing\WorkCharges\WorkChargeResource;
 use App\Filament\Resources\Sales\Enquiries\Pages\ViewEnquiry;
 use App\Filament\Resources\Sales\Quotes\Pages\EditQuote;
 use App\Filament\Resources\Sales\Quotes\Pages\ListQuotes;
@@ -18,7 +19,6 @@ use App\Models\Medium;
 use App\Models\State;
 use App\Models\Substrate;
 use App\Models\User;
-use App\Models\WorkCharge;
 use App\Notifications\QuoteSent;
 use App\Settings\CompanySettings;
 use App\Settings\PricingSettings;
@@ -301,9 +301,13 @@ test('each quote line keeps a breakdown of how its price was worked out, shown o
     Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
         ->assertOk()
         ->assertSee('Price breakdown')
-        ->assertSee($rows['frame']['rate'])
+        // In plain words: how much moulding, at what rate per metre.
+        ->assertSee('(incl. corners and 10% extra for cutting)')
+        ->assertSee('Artwork & materials')
+        ->assertSee('Profit')
         ->assertDontSee('Framing work')
-        ->assertSee('Calculated unit price')
+        ->assertDontSee('Work after the artwork')
+        ->assertSee('Price per piece')
         ->assertSee('What the customer asked for')
         ->assertSee('Labour (per piece)');
 });
@@ -349,7 +353,7 @@ test('choosing the artist on the quote page re-prices the line straight away', f
     $page->set("data.lines.{$key}.artist_id", $luca->id)
         ->assertSet("data.lines.{$key}.calculated_unit_price", $expected)
         ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($expected))
-        ->assertSee('artist fee: Luca Bianchi')
+        ->assertSee('New artwork by Luca Bianchi')
         ->call('save')
         ->assertHasNoFormErrors();
 
@@ -370,7 +374,7 @@ test('labour entered on a quote line is added to the unit price and the line tot
     $page->set("data.lines.{$key}.labour_amount", '750')
         ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 75_000)
         ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($engine + 75_000))
-        ->assertSee('Labour (entered on quote)')
+        ->assertSee('+ ₹750') // labour in the price breakdown
         ->assertSee(Money::format(($engine + 75_000) * 2)) // live totals
         ->call('save')
         ->assertHasNoFormErrors();
@@ -390,42 +394,72 @@ test('labour entered on a quote line is added to the unit price and the line tot
         ->assertHasFormErrors(["lines.{$key}.override_reason" => 'required']);
 });
 
-test('work after the artwork takes its amount from Work charges, can be changed on the quote, and adds to the price', function () {
-    $installation = WorkCharge::where('name', 'Installation')->firstOrFail();
-    expect($installation->amount)->toBe(300_000); // ₹3,000 default
-
+test('quote lines have no separate work section: labour per piece covers it, and Work charges is off the menu', function () {
     $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
-    $line = $quote->lines()->firstOrFail();
-    $engine = $line->calculated_unit_price;
 
     $this->actingAs($this->admin);
-    $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()])->assertSee('Work after the artwork');
-    $key = array_key_first($page->get('data.lines'));
+    Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
+        ->assertOk()
+        ->assertDontSee('Work after the artwork')
+        ->assertDontSee('Add work (cutting, mounting, installation…)')
+        ->assertSee('Labour (per piece)');
 
-    // Picking the work fills in the master amount and re-prices the line.
-    $page->set("data.lines.{$key}.work_items", ['w1' => ['work_charge_id' => null, 'name' => null, 'amount' => '0']])
-        ->set("data.lines.{$key}.work_items.w1.work_charge_id", $installation->id)
-        ->assertSet("data.lines.{$key}.work_items.w1.amount", '3000')
-        ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 300_000)
-        ->assertSee('Work: Installation');
-
-    // Staff lower it for this quote only.
-    $page->set("data.lines.{$key}.work_items.w1.amount", '2500')
-        ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 250_000)
-        ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($engine + 250_000))
-        ->call('save')
-        ->assertHasNoFormErrors();
-
-    $line->refresh();
-    expect($line->work_items)->toHaveCount(1)
-        ->and($line->work_items[0])->toMatchArray(['work_charge_id' => $installation->id, 'name' => 'Installation', 'amount' => 250_000])
-        ->and($line->workTotal())->toBe(250_000)
-        ->and($line->unit_price)->toBe($engine + 250_000)
-        ->and($line->isOverridden())->toBeFalse()
-        ->and($line->line_total)->toBe(($engine + 250_000) * 2)
-        ->and($installation->fresh()->amount)->toBe(300_000); // the master is unchanged
+    expect(WorkChargeResource::shouldRegisterNavigation())->toBeFalse();
 });
 
-test('work charges are managed as a pricing master', function () {
-    $this->actingAs($this->admin)->get('/admin/pricing/work-charges')->assertOk()->assertSee('Installation');
+test('a quote with an unfinished line cannot be sent until staff finish it or type their own price', function () {
+    $enquiry = submittedEnquiry($this->customer);
+    $enquiry->lines()->firstOrFail()->update(['source_type' => 'custom_creation', 'artwork_id' => null]);
+    $builder = app(QuoteBuilder::class);
+    $quote = $builder->createFromEnquiry($enquiry->fresh(), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    expect($line->breakdown['pending'])->toContain('Choose an artist');
+
+    $message = "Line 1 “{$line->title}” is not finished: choose an artist (or type the price yourself).";
+    try {
+        $builder->send($quote, $this->admin, ['portal']);
+        $this->fail('The quote should not have been sent.');
+    } catch (ValidationException $e) {
+        expect($e->errors()['lines'])->toBe([$message]);
+    }
+
+    // The admin screen explains why instead of failing silently.
+    $this->actingAs($this->admin);
+    Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
+        ->callAction('send', data: ['channels' => ['portal']])
+        ->assertNotified('The quote was not sent');
+    expect($quote->fresh()->status)->toBe(QuoteStatus::Draft);
+
+    // A price typed by staff is their decision: the quote can go.
+    $line->update(['unit_price' => $line->calculated_unit_price + 500_000]);
+    $builder->send($quote->fresh(), $this->admin, ['portal']);
+    expect($quote->fresh()->status)->toBe(QuoteStatus::Sent);
+});
+
+test('a counted line with no price blocks sending, an unselected optional one does not', function () {
+    $builder = app(QuoteBuilder::class);
+    $quote = $builder->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    $line->update(['unit_price' => 0]);
+
+    expect($builder->unfinishedLines($quote))->toBe(["Line 1 “{$line->title}” has no price yet. Type a unit price before sending."]);
+
+    $line->update(['is_optional' => true, 'is_selected' => false]);
+    expect($builder->unfinishedLines($quote))->toBe([]);
+});
+
+test('the quote PDF lists the work after the artwork and labour included in a line\'s price', function () {
+    $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
+    $quote->lines()->firstOrFail()->update([
+        'labour_amount' => 20_000,
+        'work_items' => [
+            ['work_charge_id' => null, 'name' => 'Installation', 'amount' => 300_000],
+            ['work_charge_id' => null, 'name' => 'Cutting & trimming', 'amount' => 50_000],
+        ],
+    ]);
+    $quote->load('lines', 'extras', 'enquiry.customer', 'preparer');
+
+    $html = view('pdf.quote', ['quote' => $quote, 'company' => app(CompanySettings::class)])->render();
+
+    expect($html)->toContain('Includes: Installation ₹3,000.00 · Cutting &amp; trimming ₹500.00 · Labour ₹200.00 per piece');
 });

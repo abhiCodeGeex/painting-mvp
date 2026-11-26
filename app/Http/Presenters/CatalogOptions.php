@@ -21,6 +21,7 @@ use App\Models\QualityTier;
 use App\Models\StandardSize;
 use App\Models\State;
 use App\Models\Substrate;
+use App\Settings\PricingSettings;
 use App\Support\MediaUrl;
 
 /**
@@ -34,6 +35,9 @@ class CatalogOptions
     public static function forEditor(): array
     {
         return [
+            // The small gap the frame's rebate leaves around the mat/picture (each side): pricing counts it in
+            // the outer size, so the previews do too.
+            'rebate_allowance_mm' => (int) app(PricingSettings::class)->rebate_allowance_mm,
             'artworks' => Artwork::active()->ordered()->with(['media', 'artist', 'categories.parent', 'sizePrices', 'mediums', 'substrates'])->get()
                 ->map(fn (Artwork $a) => [
                     'id' => $a->id,

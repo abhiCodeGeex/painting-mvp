@@ -5,6 +5,7 @@ import { InertiaRouter } from '@/inertia/router';
 import { AppLayout } from '@/layouts/app-layout';
 import { SettingsLayout } from '@/layouts/settings-layout';
 import type { Address, Option } from '@/types/portal';
+import { Confirm } from '@/ui/confirm';
 import { Icon } from '@/ui/icon';
 import { UiButton } from '@/ui/primitives';
 import { HeadingSmall } from '@/ui/text';
@@ -80,7 +81,10 @@ export default class Addresses {
         this.dialogOpen.set(true);
     }
 
-    remove(a: Address): void {
-        if (confirm('Remove this address?')) this.router.delete(route('addresses.destroy', a.id), { preserveScroll: true });
+    private confirm = inject(Confirm);
+
+    async remove(a: Address): Promise<void> {
+        const ok = await this.confirm.ask({ title: 'Remove this address?', confirm: 'Remove', destructive: true });
+        if (ok) this.router.delete(route('addresses.destroy', a.id), { preserveScroll: true });
     }
 }

@@ -3,6 +3,8 @@
 namespace App\Domain\Enquiries;
 
 use App\Domain\Pricing\FrameLayers;
+use App\Domain\Pricing\LineConfig;
+use App\Domain\Pricing\PricingEngine;
 use App\Enums\LineSource;
 use App\Models\Artwork;
 use App\Models\Frame;
@@ -34,6 +36,12 @@ class LineCompatibility
         $width = (int) $line['width_mm'];
         $height = (int) $line['height_mm'];
         $source = LineSource::from($line['source_type']);
+        $outer = ($line['size_reference'] ?? 'image') === 'outer';
+        if ($outer) {
+            // An outer size includes the frames and mat: the checks below are about the picture inside,
+            // worked out exactly as the price is.
+            [$width, $height] = self::pictureSize($line);
+        }
 
         $artwork = $source === LineSource::Catalog && ! empty($line['artwork_id']) ? Artwork::with(['mediums', 'substrates'])->find($line['artwork_id']) : null;
         $medium = ! empty($line['medium_id']) ? Medium::with('substrates')->find($line['medium_id']) : null;
@@ -44,7 +52,9 @@ class LineCompatibility
 
         if ($artwork) {
             if (! $artwork->allow_custom_size && $artwork->sizePrices()->where(['width_mm' => $width, 'height_mm' => $height])->doesntExist()) {
-                $result->errors['width_mm'] = 'This artwork is only available in the listed sizes.';
+                $result->errors['width_mm'] = $outer
+                    ? 'This artwork comes in the listed sizes only: choose “Artwork / image size” and pick one.'
+                    : 'This artwork is only available in the listed sizes.';
             }
             if (($artwork->max_width_mm && $width > $artwork->max_width_mm) || ($artwork->max_height_mm && $height > $artwork->max_height_mm)) {
                 $result->errors['width_mm'] = 'This artwork cannot be made this large.';
@@ -129,6 +139,32 @@ class LineCompatibility
         }
 
         return $result;
+    }
+
+    /**
+     * The picture inside an outer size: outer − frames − rebate allowance − mat (as PricingEngine::dimensions).
+     *
+     * @param  array<string, mixed>  $line
+     * @return array{0: int, 1: int}
+     */
+    private static function pictureSize(array $line): array
+    {
+        $layers = FrameLayers::normalise($line['frame_layers'] ?? null, ! empty($line['frame_id']) ? (int) $line['frame_id'] : null);
+        $frames = Frame::whereIn('id', FrameLayers::frameIds($layers))->get()->keyBy('id');
+        $loaded = [];
+        foreach ($layers as $layer) {
+            if (! $primary = $frames->get($layer['frame_id'])) {
+                continue;
+            }
+            $second = $layer['split'] ? $frames->get($layer['split']['frame_id']) : null;
+            $loaded[] = ['frame' => $primary, 'split' => $second ? ['frame' => $second, 'mode' => $layer['split']['mode']] : null];
+        }
+        // A mat only comes with a frame (or frame advice), as in pricing.
+        $framed = $loaded !== [] || ! empty($line['frame_advice_requested']);
+        $mat = $framed && ! empty($line['mat_id']) ? Mat::find($line['mat_id']) : null;
+        $dims = app(PricingEngine::class)->dimensions(LineConfig::fromArray($line), $loaded[0]['frame'] ?? null, $mat, $loaded ?: null);
+
+        return [(int) $dims['image_w'], (int) $dims['image_h']];
     }
 
     /**

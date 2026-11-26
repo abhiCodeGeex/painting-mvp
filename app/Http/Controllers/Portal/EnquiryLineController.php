@@ -11,14 +11,23 @@ use App\Models\EnquiryLine;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Add / edit / duplicate / remove artwork lines on a draft enquiry.
  */
 class EnquiryLineController extends PortalController
 {
+    /**
+     * Each line is priced, previewed and quoted on its own, so a very long enquiry slows every page
+     * that shows it; larger projects are split into more than one enquiry.
+     */
+    public const MAX_LINES = 50;
+
     public function store(EnquiryLineRequest $request, Enquiry $enquiry): RedirectResponse
     {
+        $this->ensureRoomForAnotherLine($enquiry);
+
         DB::transaction(function () use ($request, $enquiry): void {
             $line = $enquiry->lines()->create([
                 ...$this->attributes($request),
@@ -50,6 +59,7 @@ class EnquiryLineController extends PortalController
     {
         $this->authorizeEditor($request, $enquiry);
         abort_unless($line->enquiry_id === $enquiry->id, 404);
+        $this->ensureRoomForAnotherLine($enquiry);
 
         DB::transaction(function () use ($enquiry, $line): void {
             $copy = $line->replicate(['created_at', 'updated_at']);
@@ -74,6 +84,15 @@ class EnquiryLineController extends PortalController
         $line->delete();
 
         return back()->with('success', 'Artwork removed.');
+    }
+
+    private function ensureRoomForAnotherLine(Enquiry $enquiry): void
+    {
+        if ($enquiry->lines()->count() >= self::MAX_LINES) {
+            throw ValidationException::withMessages([
+                'lines' => 'An enquiry can have up to '.self::MAX_LINES.' artworks. Please start a new enquiry for the rest.',
+            ]);
+        }
     }
 
     /**

@@ -1,7 +1,19 @@
 import { DIALOG_DESCRIPTION, DIALOG_HEADER, DIALOG_TITLE, UiDialog } from '@/ui/dialog';
 import { Icon } from '@/ui/icon';
 import { UiButton } from '@/ui/primitives';
-import { ChangeDetectionStrategy, Component, CUSTOM_ELEMENTS_SCHEMA, DestroyRef, effect, ElementRef, inject, input, model, signal, viewChild } from '@angular/core';
+import {
+    ChangeDetectionStrategy,
+    Component,
+    CUSTOM_ELEMENTS_SCHEMA,
+    DestroyRef,
+    effect,
+    ElementRef,
+    inject,
+    input,
+    model,
+    signal,
+    viewChild,
+} from '@angular/core';
 import { LoaderCircle, Smartphone } from 'lucide';
 
 /** Google's free <model-viewer> (Apache-2.0), self-hosted and loaded only when AR is first opened. */
@@ -40,14 +52,14 @@ interface ModelViewerElement extends HTMLElement {
     schemas: [CUSTOM_ELEMENTS_SCHEMA],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
-        <ui-dialog [(open)]="open" contentClass="sm:max-w-2xl">
+        <ui-dialog [(open)]="open" contentClass="sm:max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
             @if (open()) {
                 <div [class]="h">
                     <h2 [class]="t">View on your wall</h2>
                     <p [class]="d">See {{ title() }} at its real size on your own wall, through your phone's camera.</p>
                 </div>
 
-                <div class="relative h-[340px] overflow-hidden rounded-lg border bg-neutral-100 dark:bg-neutral-900">
+                <div class="relative h-[min(340px,45dvh)] overflow-hidden rounded-lg border bg-neutral-100 dark:bg-neutral-900">
                     @if (url() && ready()) {
                         <model-viewer
                             #viewer
@@ -75,7 +87,9 @@ interface ModelViewerElement extends HTMLElement {
                     <button ui-button size="lg" type="button" class="w-full" (click)="startAr()">
                         <svg [icon]="Smartphone" class="size-4" /> Place it on my wall
                     </button>
-                    <p class="text-muted-foreground text-xs">Point your camera at the wall and move the phone slowly until the artwork appears. It is shown at its real size.</p>
+                    <p class="text-muted-foreground text-xs">
+                        Point your camera at the wall and move the phone slowly until the artwork appears. It is shown at its real size.
+                    </p>
                 } @else if (url() && ready()) {
                     <div class="flex flex-col items-center gap-4 rounded-lg border p-4 sm:flex-row">
                         @if (qr()) {
@@ -85,10 +99,15 @@ interface ModelViewerElement extends HTMLElement {
                             <p class="font-medium">Open this on your phone</p>
                             <ol class="text-muted-foreground mt-1 list-decimal space-y-0.5 pl-4 text-xs">
                                 <li>Scan the code with your phone's camera.</li>
-                                <li>Log in, open this artwork and tap <strong>View on your wall</strong>.</li>
+                                <li>
+                                    Log in and open this enquiry (a new artwork needs <strong>Add to enquiry</strong> first), then tap
+                                    <strong>View on your wall</strong>.
+                                </li>
                                 <li>Point the phone at your wall — the artwork appears at its real size.</li>
                             </ol>
-                            <p class="text-muted-foreground mt-2 text-xs">Works on most Android phones (Chrome) and iPhones (Safari). You can rotate the model above with your mouse.</p>
+                            <p class="text-muted-foreground mt-2 text-xs">
+                                Works on most Android phones (Chrome) and iPhones (Safari). You can rotate the model above with your mouse.
+                            </p>
                         </div>
                     </div>
                 }

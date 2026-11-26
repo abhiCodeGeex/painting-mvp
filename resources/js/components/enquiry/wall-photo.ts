@@ -2,7 +2,7 @@ import { mmToUnit, unitToMm, type Unit } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { Icon } from '@/ui/icon';
 import { UiButton, UiInput } from '@/ui/primitives';
-import { ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, input, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, ElementRef, inject, input, signal, viewChild } from '@angular/core';
 import { Camera, Eye, EyeOff, RotateCcw, Upload } from 'lucide';
 import { FramedArt } from './framed-art';
 import { outerSize, stageClass, type PreviewFrame, type PreviewLayer, type PreviewMat } from './preview-helpers';
@@ -75,6 +75,49 @@ const DEFAULT_CORNERS: Pt[] = [
  * measured (a door, a window, a taped rectangle) and the framed artwork is drawn on the photo in
  * perspective, at true size. The photo never leaves the device.
  */
+/** The customer's last wall photo with its marks, kept in this browser only (never uploaded). */
+interface SavedWall {
+    blob: Blob;
+    corners: Pt[];
+    refW: number;
+    refH: number;
+    artCentre: Pt | null;
+}
+
+function wallDb(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open('paint-wall-photo', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('wall');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+/** Private windows or blocked storage: the photo simply isn't kept. */
+async function loadWall(): Promise<SavedWall | null> {
+    try {
+        const db = await wallDb();
+        return await new Promise((resolve) => {
+            const req = db.transaction('wall').objectStore('wall').get('last');
+            req.onsuccess = () => resolve((req.result as SavedWall | undefined) ?? null);
+            req.onerror = () => resolve(null);
+        });
+    } catch {
+        return null;
+    }
+}
+
+async function saveWall(value: SavedWall | null): Promise<void> {
+    try {
+        const db = await wallDb();
+        const store = db.transaction('wall', 'readwrite').objectStore('wall');
+        if (value) store.put(value, 'last');
+        else store.delete('last');
+    } catch {
+        /* not kept: fine */
+    }
+}
+
 @Component({
     selector: 'wall-photo',
     imports: [Icon, UiButton, UiInput, FramedArt],
@@ -86,10 +129,13 @@ const DEFAULT_CORNERS: Pt[] = [
                 <span class="font-medium">Upload a photo of your wall</span>
                 <span class="text-muted-foreground max-w-sm text-xs">
                     Stand straight in front of the wall. Include something you can measure — a door, a window, or a piece of tape marking a rectangle.
-                    Your photo stays on this device; it is not uploaded.
+                    Your photo stays on this device (kept in this browser for next time); it is not uploaded.
                 </span>
+                @if (photoError(); as err) {
+                    <span class="max-w-sm text-xs text-amber-700 dark:text-amber-400">{{ err }}</span>
+                }
                 <span ui-button variant="outline" size="sm"><svg [icon]="Upload" class="size-4" /> Choose photo</span>
-                <input type="file" accept="image/*" class="hidden" (change)="pick($event)" />
+                <input type="file" accept="image/*,.heic,.heif" class="hidden" (change)="pick($event)" />
             </label>
         } @else {
             <div class="space-y-2">
@@ -100,6 +146,7 @@ const DEFAULT_CORNERS: Pt[] = [
                         class="block h-auto max-h-[max(220px,calc(100dvh-29rem))] w-auto max-w-full"
                         draggable="false"
                         (load)="measure()"
+                        (error)="photoFailed()"
                     />
 
                     @if (transform(); as tf) {
@@ -154,7 +201,8 @@ const DEFAULT_CORNERS: Pt[] = [
                             min="1"
                             class="h-8 w-24"
                             [value]="refWText()"
-                            (input)="setRef('w', $any($event.target).value)"
+                            (change)="setRef('w', $any($event.target).value)"
+                            (keydown.enter)="$event.preventDefault(); $event.stopPropagation(); $any($event.target).blur()"
                         />
                     </div>
                     <div class="grid gap-1">
@@ -165,7 +213,8 @@ const DEFAULT_CORNERS: Pt[] = [
                             min="1"
                             class="h-8 w-24"
                             [value]="refHText()"
-                            (input)="setRef('h', $any($event.target).value)"
+                            (change)="setRef('h', $any($event.target).value)"
+                            (keydown.enter)="$event.preventDefault(); $event.stopPropagation(); $any($event.target).blur()"
                         />
                     </div>
                     <button ui-button variant="ghost" size="sm" type="button" (click)="showMarks.set(!showMarks())">
@@ -215,6 +264,7 @@ export class WallPhoto {
     protected readonly cornerNames = ['Top left', 'Top right', 'Bottom right', 'Bottom left'];
 
     protected photo = signal<string | null>(null);
+    protected photoError = signal<string | null>(null);
     protected showMarks = signal(true);
     /** Corners of the measured rectangle, as fractions of the photo (TL, TR, BR, BL). */
     private corners = signal<Pt[]>(DEFAULT_CORNERS);
@@ -273,11 +323,36 @@ export class WallPhoto {
 
     private objectUrl: string | null = null;
     private observer = new ResizeObserver(() => this.measure());
+    /** The photo file kept on this device (IndexedDB), so it is still there when the editor or page reopens. */
+    private photoBlob: Blob | null = null;
 
     constructor() {
         inject(DestroyRef).onDestroy(() => {
             if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
             this.observer.disconnect();
+            if (saveTimer) clearTimeout(saveTimer);
+        });
+
+        // The last wall photo and its marks come back (stored only in this browser).
+        void loadWall().then((saved) => {
+            if (!saved || this.photo()) return;
+            this.photoBlob = saved.blob;
+            this.objectUrl = URL.createObjectURL(saved.blob);
+            this.corners.set(saved.corners);
+            this.refW.set(saved.refW);
+            this.refH.set(saved.refH);
+            this.artCentre.set(saved.artCentre);
+            this.photo.set(this.objectUrl);
+        });
+
+        // Keep the marks and the artwork's place with it (a moment after the last change).
+        let saveTimer: ReturnType<typeof setTimeout> | null = null;
+        effect(() => {
+            const state = { corners: this.corners(), refW: this.refW(), refH: this.refH(), artCentre: this.artCentre() };
+            const blob = this.photo() ? this.photoBlob : null;
+            if (!blob) return;
+            if (saveTimer) clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => void saveWall({ blob, ...state }), 400);
         });
     }
 
@@ -285,13 +360,28 @@ export class WallPhoto {
         const input = event.target as HTMLInputElement;
         const file = input.files?.[0];
         input.value = '';
-        if (!file || !file.type.startsWith('image/')) return;
+        // iPhone photos can arrive as HEIC with no type on Windows: let the browser try, and say so if it can't.
+        if (!file || !(file.type.startsWith('image/') || /\.(heic|heif)$/i.test(file.name))) return;
+        this.photoError.set(null);
         if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+        this.photoBlob = file;
         this.objectUrl = URL.createObjectURL(file);
         this.photo.set(this.objectUrl);
         this.corners.set(DEFAULT_CORNERS);
         this.artCentre.set(null);
         this.showMarks.set(true);
+    }
+
+    /** The browser can't show this file (e.g. HEIC on Chrome / Windows). */
+    photoFailed(): void {
+        if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+        this.objectUrl = null;
+        this.photoBlob = null;
+        void saveWall(null);
+        this.photo.set(null);
+        this.photoError.set(
+            'This photo format can’t be shown here — please use a JPEG or PNG (on iPhone: Settings › Camera › Formats › Most Compatible).',
+        );
     }
 
     measure(): void {
@@ -343,16 +433,21 @@ export class WallPhoto {
 
     /** Follows the pointer until it is released. */
     private track(event: PointerEvent, onMove: (x: number, y: number) => void): void {
+        const id = event.pointerId;
         const move = (e: PointerEvent) => {
+            if (e.pointerId !== id) return; // a second finger doesn't take over the drag
             const [x, y] = this.localPoint(e);
             onMove(x, y);
         };
-        const up = () => {
+        const up = (e: PointerEvent) => {
+            if (e.pointerId !== id) return;
             window.removeEventListener('pointermove', move);
             window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
         };
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
         move(event);
     }
 }

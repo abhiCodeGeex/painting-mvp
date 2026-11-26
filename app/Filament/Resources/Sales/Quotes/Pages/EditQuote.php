@@ -12,6 +12,9 @@ use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
+use Illuminate\Support\Arr;
+use Illuminate\Support\HtmlString;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Edit a draft quote, preview the PDF and send it by email, WhatsApp and/or the portal.
@@ -81,8 +84,19 @@ class EditQuote extends EditRecord
                         ->rows(6)
                         ->placeholder('Leave empty for the standard message with the total, validity date and link.'),
                 ])
-                ->action(function (array $data): void {
-                    $result = app(QuoteBuilder::class)->send($this->quote(), auth()->user(), $data['channels'], $data['message'] ?? null);
+                ->action(function (array $data, Action $action): void {
+                    try {
+                        $result = app(QuoteBuilder::class)->send($this->quote(), auth()->user(), $data['channels'], $data['message'] ?? null);
+                    } catch (ValidationException $e) {
+                        // The errors are about the quote (unfinished lines, already sent), not the modal's
+                        // fields, so they would not show next to any input: list them in a notification.
+                        Notification::make()->title('The quote was not sent')
+                            ->body(new HtmlString(collect(Arr::flatten($e->errors()))->map(fn ($m) => e($m))->implode('<br>')))
+                            ->danger()->persistent()->send();
+                        $action->halt();
+
+                        return;
+                    }
 
                     Notification::make()->title('Quote sent')->body('The enquiry is now “Quoted”.')->success()->send();
 

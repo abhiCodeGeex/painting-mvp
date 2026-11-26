@@ -108,10 +108,11 @@ function supportsWebGL(): boolean {
 
             <!-- Kept once opened (hidden on other tabs), so the wall photo and its measurements survive a tab switch. -->
             @if (photoOpened()) {
+                <!-- The wrapper hides the loading / error stages on other tabs too. -->
+                <div [class]="photoClass()" [class.hidden]="view() !== 'photo'">
                 @defer (on immediate) {
                     <wall-photo
                         [class]="photoClass()"
-                        [class.hidden]="view() !== 'photo'"
                         [fill]="fillHeight()"
                         [imageUrl]="imageUrl()"
                         [widthMm]="w()"
@@ -138,6 +139,7 @@ function supportsWebGL(): boolean {
                         </div>
                     </div>
                 }
+                </div>
             }
 
             <!-- Same stage as the 360° room, so switching tabs never jumps; the drawing is fitted inside it. -->
@@ -281,6 +283,8 @@ export class WallPreview {
     readonly frame = input<PreviewFrame | null>(null);
     /** Stacked / split frames, innermost first (optional; layers[0] is `frame`). */
     readonly layers = input<PreviewLayer[] | null>(null);
+    /** Rebate gap (mm, each side) inside a frame: part of the finished size, as priced. */
+    readonly rebateMm = input(0);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
     readonly edgeStyle = input<string | null>(null);
@@ -326,7 +330,9 @@ export class WallPreview {
     protected w = computed(() => Math.max(50, this.widthMm() || 0));
     protected h = computed(() => Math.max(50, this.heightMm() || 0));
     /** The artwork as a one-piece list for the 3D room. */
-    protected pieces = computed<WallPiece[]>(() => [
+    // Same piece (e.g. only notes typed): same array, so the 3D room doesn't rebuild its meshes.
+    protected pieces = computed<WallPiece[]>(
+        () => [
         {
             id: 'piece',
             imageUrl: this.imageUrl(),
@@ -341,8 +347,10 @@ export class WallPreview {
             glazing: this.glazing(),
             rotation: this.rotation(),
         },
-    ]);
-    private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat(), this.layers()));
+    ],
+        { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
+    );
+    private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat(), this.layers(), this.rebateMm()));
     protected finishedLabel = computed(() => sizeLabel(this.outer().width, this.outer().height, this.unit()));
 
     /** The customer's wall (when they typed its width): drawn as a dashed outline with the piece on it. */

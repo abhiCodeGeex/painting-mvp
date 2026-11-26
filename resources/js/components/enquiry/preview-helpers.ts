@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import type { CatalogFrame, CatalogOptions, FrameLayerInput, FrameSplitMode } from '@/types/portal';
+import type { CatalogFrame, CatalogOptions, EnquiryLine, FrameLayerInput, FrameSplitMode } from '@/types/portal';
 
 export type GlazingLook = 'none' | 'standard' | 'low';
 
@@ -97,6 +97,22 @@ export const WALL_COLOURS: { name: string; hex: string }[] = [
 
 export const SAMPLE_GRADIENT = 'linear-gradient(135deg,#f6d365 0%,#fda085 35%,#a1c4fd 70%,#5b7db1 100%)';
 
+/**
+ * The picture itself (as it hangs) for a saved line: with an "outer" size, what is left inside the frames and mat.
+ * Every preview of a saved line draws this size and adds its frame and mat around it.
+ */
+export function pictureSize(options: CatalogOptions, line: EnquiryLine): { width_mm: number; height_mm: number } {
+    const hung = hungSize(line);
+    if (line.size_reference !== 'outer') return hung;
+    const parts = previewParts(options, line);
+    const rebate = parts.layers.length ? (options.rebate_allowance_mm ?? 0) : 0;
+    const surround = 2 * (framesWidth(parts.frame, parts.layers) + rebate + (parts.mat?.border_mm ?? 0));
+    return {
+        width_mm: Math.max(50, hung.width_mm - surround),
+        height_mm: Math.max(50, hung.height_mm - surround - (parts.mat?.bottom_weight_mm ?? 0)),
+    };
+}
+
 /** Frame/mat/depth/glazing for the previews, from the ids chosen on a line. */
 /** A saved line's size as it hangs: a catalogue painting turned 90°/270° is saved with its own size, so swap. */
 export function hungSize(line: { width_mm: number; height_mm: number; image_rotation?: number; source_type?: string | null }): {
@@ -140,10 +156,17 @@ export function previewParts(
     };
 }
 
-/** Outer size (mm) of the finished piece: picture + mat + frame (all layers, when stacked). */
-export function outerSize(widthMm: number, heightMm: number, frame: PreviewFrame | null, mat: PreviewMat | null, layers?: PreviewLayer[] | null) {
+/** Outer size (mm) of the finished piece: picture + mat + rebate gap + frame (all layers, when stacked). */
+export function outerSize(
+    widthMm: number,
+    heightMm: number,
+    frame: PreviewFrame | null,
+    mat: PreviewMat | null,
+    layers?: PreviewLayer[] | null,
+    rebateMm = 0,
+) {
     const m = mat?.border_mm ?? 0;
-    const f = framesWidth(frame, layers);
+    const f = framesWidth(frame, layers) + (frame || layers?.length ? rebateMm : 0);
     return {
         width: widthMm + 2 * m + 2 * f,
         height: heightMm + 2 * m + (mat?.bottom_weight_mm ?? 0) + 2 * f,

@@ -55,7 +55,9 @@ class EnquiryWorkflow
         if ($enquiry->lines_count === 0) {
             $errors['lines'] = 'Add at least one artwork before submitting.';
         }
-        if (! $enquiry->delivery_address_id) {
+        // The address must still exist (a customer can delete it in Settings after choosing it).
+        // (deliveryAddress includes deleted ones, for the history of sent enquiries.)
+        if (! $enquiry->deliveryAddress || $enquiry->deliveryAddress->trashed()) {
             $errors['delivery_address_id'] = 'Choose a delivery address.';
         }
         if ($errors) {

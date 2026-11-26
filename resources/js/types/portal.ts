@@ -196,6 +196,8 @@ export interface CatalogMat {
 }
 
 export interface CatalogOptions {
+    /** Gap (mm, each side) between the mat/picture and a frame's rebate; part of the outer size when framed. */
+    rebate_allowance_mm?: number;
     artworks: CatalogArtwork[];
     categories: string[];
     mediums: { id: number; name: string; kind: string; substrate_ids: number[]; description: string | null }[];

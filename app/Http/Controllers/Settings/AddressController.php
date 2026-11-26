@@ -43,6 +43,8 @@ class AddressController extends PortalController
     public function storeForEnquiry(Request $request, Enquiry $enquiry): RedirectResponse
     {
         $this->authorizeEditor($request, $enquiry);
+        // Added from the enquiry's "Deliver to" step: always a delivery address.
+        $request->merge(['kind' => AddressKind::Delivery->value]);
 
         return $this->createFor($enquiry->customer, $request);
     }

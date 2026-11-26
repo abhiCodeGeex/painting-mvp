@@ -67,9 +67,9 @@ export class ChoiceRow {
                 <button type="button" [class]="tile(selected() === f.id)" [attr.aria-pressed]="selected() === f.id" (click)="picked.emit(f.id)">
                     <span class="flex h-11 items-center justify-center">
                         <framed-art
-                            [imageUrl]="null"
-                            [widthMm]="300"
-                            [heightMm]="400"
+                            [imageUrl]="imageUrl()"
+                            [widthMm]="sample().w"
+                            [heightMm]="sample().h"
                             [frame]="{
                                 colour: f.colour,
                                 width_mm: f.width_mm,
@@ -78,7 +78,7 @@ export class ChoiceRow {
                                 strip_face_mm: f.strip_face_mm ?? null,
                             }"
                             [mat]="null"
-                            [scale]="40 / (400 + 2 * f.width_mm)"
+                            [scale]="40 / (sample().long + 2 * f.width_mm)"
                         />
                     </span>
                     <span class="text-xs leading-tight font-medium">{{ f.name }}</span>
@@ -92,9 +92,21 @@ export class FrameTiles {
     readonly frames = input.required<CatalogFrame[]>();
     readonly selected = input<number | null>(null);
     readonly picked = output<number>();
+    /** The customer's picture, so each tile shows their painting in that frame (a sample without one). */
+    readonly imageUrl = input<string | null>(null);
+    /** The picture's width ÷ height. */
+    readonly ratio = input(0.75);
+    /** Sample size (mm) with the picture's proportions, 400 mm on its long side. */
+    protected sample = computed(() => {
+        const r = this.ratio() > 0 && Number.isFinite(this.ratio()) ? this.ratio() : 0.75;
+        return r >= 1 ? { w: 400, h: Math.round(400 / r), long: 400 } : { w: Math.round(400 * r), h: 400, long: 400 };
+    });
 
     protected tile(active: boolean): string {
-        return 'flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-center transition ' + (active ? 'border-primary ring-primary ring-2' : 'hover:bg-muted');
+        return (
+            'flex flex-col items-center gap-1 rounded-lg border px-2 py-2 text-center transition ' +
+            (active ? 'border-primary ring-primary ring-2' : 'hover:bg-muted')
+        );
     }
 }
 
@@ -495,7 +507,8 @@ function fitAspect(longSideMm: number, ratio: number): { width_mm: number; heigh
             </div>
 
             @if (!fixedSizes()) {
-                <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <!-- Three equal fields and a column as wide as the Rotate button (its label never clips). -->
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
                     <div class="grid gap-1.5">
                         <label ui-label>Width ({{ unitLabel() }})</label>
                         <input
@@ -533,14 +546,22 @@ function fitAspect(longSideMm: number, ratio: number): { width_mm: number; heigh
                                 type="button"
                                 variant="outline"
                                 size="sm"
+                                class="whitespace-nowrap"
                                 [title]="'Swap width and height — the picture stays upright and stretches to fill'"
                                 [attr.aria-pressed]="!!rotation()"
                                 (click)="rotatePainting()"
                             >
-                                ⟳ Rotate{{ rotation() ? ' · sides swapped' : '' }}
+                                ⟳ Rotate{{ rotation() ? ' · swapped' : '' }}
                             </button>
                         } @else {
-                            <button ui-button type="button" variant="ghost" size="sm" (click)="setSize(data().height_mm, data().width_mm)">
+                            <button
+                                ui-button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                class="whitespace-nowrap"
+                                (click)="setSize(data().height_mm, data().width_mm)"
+                            >
                                 ⟲ Rotate
                             </button>
                         }
@@ -549,8 +570,8 @@ function fitAspect(longSideMm: number, ratio: number): { width_mm: number; heigh
                 @if (aspect()) {
                     <p class="text-muted-foreground -mt-2 text-xs">
                         This painting hangs {{ ratioLabel() }}{{ rotation() ? ' (sides swapped)' : '' }}: change the width or height and the other
-                        side follows, so the whole picture is always shown, never cropped. Rotate swaps width and height; the picture stays upright and
-                        stretches to fill the new size.
+                        side follows, so the whole picture is always shown, never cropped. Rotate swaps width and height; the picture stays upright
+                        and stretches to fill the new size.
                     </p>
                 }
             } @else {
@@ -560,18 +581,21 @@ function fitAspect(longSideMm: number, ratio: number): { width_mm: number; heigh
                 </div>
             }
 
-            <div>
-                <label ui-label class="mb-1.5 block">These measurements are…</label>
-                <choice-row
-                    [value]="data().size_reference"
-                    [options]="options().enums.size_references"
-                    (changed)="form().set('size_reference', $any($event))"
-                />
-                <p class="text-muted-foreground mt-1.5 text-xs">
-                    “Artwork / image size” is the picture only. “Outer size” includes the mat and frame — choose it if you have a fixed space on the
-                    wall.
-                </p>
-            </div>
+            <!-- A fixed-size artwork comes in its listed (picture) sizes only, so there is no "outer size" to choose. -->
+            @if (!fixedSizes()) {
+                <div>
+                    <label ui-label class="mb-1.5 block">These measurements are…</label>
+                    <choice-row
+                        [value]="data().size_reference"
+                        [options]="options().enums.size_references"
+                        (changed)="form().set('size_reference', $any($event))"
+                    />
+                    <p class="text-muted-foreground mt-1.5 text-xs">
+                        “Artwork / image size” is the picture only. “Outer size” includes the mat and frame — choose it if you have a fixed space on
+                        the wall.
+                    </p>
+                </div>
+            }
         </div>
     `,
 })

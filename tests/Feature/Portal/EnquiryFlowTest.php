@@ -102,6 +102,34 @@ test('a customer can create, fill and submit an enquiry', function () {
     $this->get(route('portal.enquiries.show', $enquiry))->assertOk();
 });
 
+test('only a delivery address that still exists can be the delivery address', function () {
+    $customer = makeCustomer();
+    $this->actingAs($customer->user);
+    $enquiry = $customer->enquiries()->create(['project_name' => 'Hall']);
+    $project = fn (?int $id) => ['project_name' => 'Hall', 'project_type' => 'home', 'preferred_contact' => 'email', 'delivery_address_id' => $id];
+
+    // Added from the enquiry: always a delivery address, even if "billing" is posted.
+    $this->post(route('portal.enquiries.addresses.store', $enquiry), [
+        'kind' => 'billing', 'line1' => '9 Ring Road', 'city' => 'Pune', 'pin_code' => '411001',
+        'state_id' => State::where('gst_code', '27')->value('id'),
+    ])->assertSessionHasNoErrors();
+    expect($customer->addresses()->sole()->kind->value)->toBe('delivery');
+
+    // A billing address can't be chosen to deliver to.
+    $billing = $customer->addresses()->create([
+        'kind' => 'billing', 'line1' => '1 Bill St', 'city' => 'Pune', 'pin_code' => '411001', 'state_id' => State::where('gst_code', '27')->value('id'),
+    ]);
+    $this->put(route('portal.enquiries.update', $enquiry), $project($billing->id))->assertSessionHasErrors('delivery_address_id');
+
+    // A delivery address deleted after it was chosen: the enquiry can't be sent with it.
+    $delivery = $customer->addresses()->where('kind', 'delivery')->sole();
+    $this->put(route('portal.enquiries.update', $enquiry), $project($delivery->id))->assertSessionHasNoErrors();
+    $this->post(route('portal.enquiries.lines.store', $enquiry), catalogLine())->assertSessionHasNoErrors();
+    $delivery->delete();
+    $this->post(route('portal.enquiries.submit', $enquiry))->assertSessionHasErrors('delivery_address_id');
+    expect($enquiry->fresh()->status)->toBe(EnquiryStatus::Draft);
+});
+
 test('an enquiry cannot be submitted without artworks or an address', function () {
     $customer = makeCustomer();
     $this->actingAs($customer->user);

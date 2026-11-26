@@ -1,6 +1,6 @@
 import { GalleryWall } from '@/components/enquiry/gallery-wall';
 import { LineCard } from '@/components/enquiry/line-card';
-import { hungSize, previewParts } from '@/components/enquiry/preview-helpers';
+import { pictureSize, previewParts } from '@/components/enquiry/preview-helpers';
 import { QuoteResponse } from '@/components/enquiry/quote-response';
 import { WallPreview } from '@/components/enquiry/wall-preview';
 import { InertiaForm } from '@/inertia/form';
@@ -424,8 +424,8 @@ export class CancelDialog {
                         [detailImageUrl]="p.detail_image ?? null"
                         [fullImageUrl]="p.full_image ?? null"
                         [title]="p.display_title"
-                        [widthMm]="hungSize(p).width_mm"
-                        [heightMm]="hungSize(p).height_mm"
+                        [widthMm]="pictureSize(props().options, p).width_mm"
+                        [heightMm]="pictureSize(props().options, p).height_mm"
                         [frame]="previewParts().frame"
                         [layers]="previewParts().layers"
                         [mat]="previewParts().mat"
@@ -449,7 +449,7 @@ export class CancelDialog {
     `,
 })
 export default class ShowEnquiry {
-    protected readonly hungSize = hungSize;
+    protected readonly pictureSize = pictureSize;
     protected props = pageProps<Props>();
     protected enquiry = computed(() => this.props().enquiry);
     protected preview = signal<EnquiryLine | null>(null);

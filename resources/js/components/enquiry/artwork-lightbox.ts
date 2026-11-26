@@ -1,4 +1,5 @@
 import { Icon } from '@/ui/icon';
+import { A11yModule } from '@angular/cdk/a11y';
 import {
     afterNextRender,
     ChangeDetectionStrategy,
@@ -26,7 +27,7 @@ import { outerSize, type PreviewFrame, type PreviewLayer, type PreviewMat } from
  */
 @Component({
     selector: 'artwork-lightbox',
-    imports: [Icon, FramedArt],
+    imports: [Icon, FramedArt, A11yModule],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         @if (open()) {
@@ -35,6 +36,8 @@ import { outerSize, type PreviewFrame, type PreviewLayer, type PreviewMat } from
                 role="dialog"
                 aria-modal="true"
                 [attr.aria-label]="title()"
+                cdkTrapFocus
+                [cdkTrapFocusAutoCapture]="true"
             >
                 <div class="flex items-center gap-3 px-4 py-2.5">
                     <div class="min-w-0 flex-1">
@@ -207,15 +210,19 @@ export class ArtworkLightbox {
         const onKey = (e: KeyboardEvent) => {
             if (!this.open()) return;
             if (e.key === 'Escape') {
-                // Caught before it reaches the page, so Esc closes only the lightbox, not the dialog under it.
-                e.stopPropagation();
+                // Caught before it reaches the page, so Esc closes only the lightbox, not the dialog or panel under it.
+                e.stopImmediatePropagation();
                 e.preventDefault();
                 this.open.set(false);
             } else if (e.key === '+' || e.key === '=') this.zoomBy(1.6);
             else if (e.key === '-') this.zoomBy(1 / 1.6);
             else if (e.key === '0') this.reset();
         };
-        const onResize = () => this.viewport.set({ w: window.innerWidth, h: window.innerHeight - 56 });
+        const onResize = () => {
+            this.viewport.set({ w: window.innerWidth, h: window.innerHeight - 56 });
+            // A rotated phone or resized window: fit the piece again instead of leaving it off-centre.
+            if (this.open()) queueMicrotask(() => this.reset());
+        };
         window.addEventListener('keydown', onKey, true);
         window.addEventListener('resize', onResize);
         // Live on <body>: opened from inside a dialog, a transformed ancestor would otherwise confine the

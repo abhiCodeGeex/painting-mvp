@@ -5,6 +5,18 @@
     $delivery = $quote->delivery_snapshot ?? [];
     $mandatory = $quote->lines->where('is_optional', false);
     $optional = $quote->lines->where('is_optional', true);
+    // Work after the artwork and labour are already in the unit price; listing them tells the
+    // customer what that price covers without adding rows to the table.
+    $includes = function (\App\Models\QuoteLine $line): ?string {
+        $parts = collect($line->work_items ?? [])
+            ->filter(fn ($i) => (int) ($i['amount'] ?? 0) > 0 && filled($i['name'] ?? null))
+            ->map(fn ($i) => $i['name'].' '.Money::format((int) $i['amount']));
+        if ((int) $line->labour_amount > 0) {
+            $parts->push('Labour '.Money::format((int) $line->labour_amount));
+        }
+
+        return $parts->isEmpty() ? null : 'Includes: '.$parts->implode(' · ').($line->quantity > 1 ? ' per piece' : '');
+    };
 @endphp
 <!doctype html>
 <html lang="en">
@@ -89,7 +101,7 @@
     @foreach($mandatory as $i => $line)
         <tr>
             <td>{{ $loop->iteration }}</td>
-            <td><strong>{{ $line->title }}</strong><br><span class="muted">{{ $line->spec }}</span></td>
+            <td><strong>{{ $line->title }}</strong><br><span class="muted">{{ $line->spec }}</span>@if($inc = $includes($line))<br><span class="muted small">{{ $inc }}</span>@endif</td>
             <td class="num">{{ $line->quantity }}</td>
             <td class="num">{{ Money::format($line->unit_price) }}</td>
             <td class="num">
@@ -108,7 +120,7 @@
             @foreach($optional as $line)
                 <tr>
                     <td style="width:4%"><span class="tag">OPT</span></td>
-                    <td><strong>{{ $line->title }}</strong><br><span class="muted">{{ $line->spec }}</span></td>
+                    <td><strong>{{ $line->title }}</strong><br><span class="muted">{{ $line->spec }}</span>@if($inc = $includes($line))<br><span class="muted small">{{ $inc }}</span>@endif</td>
                     <td class="num" style="width:7%">{{ $line->quantity }}</td>
                     <td class="num" style="width:15%">{{ Money::format($line->unit_price) }}</td>
                     <td class="num" style="width:15%">{{ Money::format($line->line_total) }}{{ $line->is_selected ? '' : ' (not included)' }}</td>

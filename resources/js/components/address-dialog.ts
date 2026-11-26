@@ -48,17 +48,20 @@ function initial(address: Address | null, kind: 'billing' | 'delivery'): Address
             @if (open()) {
                 <div [class]="h">
                     <h2 [class]="t">{{ address() ? 'Edit address' : 'New address' }}</h2>
-                    <p [class]="d">Where should we deliver, or who should we bill?</p>
+                    <p [class]="d">{{ storeUrl() ? 'Where should we deliver this enquiry?' : 'Where should we deliver, or who should we bill?' }}</p>
                 </div>
                 <form class="grid gap-4 sm:grid-cols-2" (submit)="submit($event)">
-                    <div class="grid gap-1.5">
-                        <label ui-label>Type</label>
-                        <select ui-select [form]="form" field="kind">
-                            <option value="delivery">Delivery</option>
-                            <option value="billing">Billing</option>
-                        </select>
-                        <input-error [message]="form.error('kind')" />
-                    </div>
+                    <!-- Added from an enquiry's "Deliver to": always a delivery address, so no type to choose. -->
+                    @if (!storeUrl()) {
+                        <div class="grid gap-1.5">
+                            <label ui-label>Type</label>
+                            <select ui-select [form]="form" field="kind">
+                                <option value="delivery">Delivery</option>
+                                <option value="billing">Billing</option>
+                            </select>
+                            <input-error [message]="form.error('kind')" />
+                        </div>
+                    }
                     <div class="grid gap-1.5">
                         <label ui-label>Label (optional)</label>
                         <input ui-input placeholder="Home, Office, Hotel site" [form]="form" field="label" />

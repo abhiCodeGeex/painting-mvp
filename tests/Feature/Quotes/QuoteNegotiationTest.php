@@ -256,6 +256,32 @@ test('an expired quote cannot be approved but a re-quote can be requested', func
     // Sales can prepare v2 from it.
     $v2 = app(QuoteBuilder::class)->createFromEnquiry($enquiry->fresh(), $this->admin);
     expect($v2->version)->toBe(2);
+
+    // Once v2 is sent, the expired v1 is history: only v2 shows as the current quote.
+    app(QuoteBuilder::class)->send($v2, $this->admin, ['portal']);
+    expect($quote->fresh()->status)->toBe(QuoteStatus::Superseded);
+    $this->actingAs($this->customer->user)->get(route('portal.enquiries.show', $enquiry))
+        ->assertInertia(fn ($page) => $page->where('quotes', fn ($quotes) => collect($quotes)->where('is_current', true)->pluck('version')->all() === [2]));
+});
+
+test('approving keeps the tax of the quote the customer saw', function () {
+    $enquiry = negotiationEnquiry($this->customer);
+    $quote = sentQuote($enquiry, $this->admin);
+    $sent = $quote->only(['tax_rate', 'tax_total', 'grand_total', 'place_of_supply', 'intra_state']);
+    expect($sent['grand_total'])->toBeGreaterThan(0);
+
+    // After sending: the default tax changes and the customer deletes the delivery address.
+    App\Models\Tax::query()->update(['rate_percent' => (float) $sent['tax_rate'] + 6]);
+    $enquiry->deliveryAddress->delete();
+
+    $this->actingAs($this->customer->user)
+        ->post(route('portal.enquiries.quotes.approve', [$enquiry, $quote]), ['name' => 'Nego Buyer', 'accept_terms' => true])
+        ->assertSessionHasNoErrors();
+
+    $quote->refresh();
+    expect($quote->status)->toBe(QuoteStatus::Approved)
+        ->and($quote->only(['tax_rate', 'tax_total', 'grand_total', 'place_of_supply', 'intra_state']))->toEqual($sent)
+        ->and($quote->response['grand_total'])->toBe($sent['grand_total']);
 });
 
 test('customers cannot answer quotes of other customers, and staff cannot answer for them', function () {

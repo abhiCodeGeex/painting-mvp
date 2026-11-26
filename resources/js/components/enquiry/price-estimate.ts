@@ -9,8 +9,11 @@ function xsrfToken(): string {
     return match ? decodeURIComponent(match[1]) : '';
 }
 
-/** A live estimate; `invalid` when the server rejected the latest options (the price shown would be stale). */
-export type LiveEstimate = LineEstimate & { invalid?: boolean };
+/**
+ * A live estimate; `invalid` when the server rejected the latest options (the price shown would be stale),
+ * with the server's first message saying what to fix.
+ */
+export type LiveEstimate = LineEstimate & { invalid?: boolean; invalid_message?: string };
 
 /**
  * Asks the server for a price whenever the line's options change (debounced).
@@ -22,6 +25,8 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
     const loading = signal(false);
     let controller: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    /** The options of the price on screen: typing a title or notes doesn't change them, so no new request. */
+    let lastBody: string | null = null;
 
     effect(() => {
         if (!enabled()) {
@@ -30,10 +35,13 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
             controller?.abort();
             estimate.set(null);
             loading.set(false);
+            lastBody = null;
             return;
         }
         const body = JSON.stringify(payload());
         const id = enquiryId();
+        if (body === lastBody) return;
+        lastBody = body;
         if (timer) clearTimeout(timer);
         timer = setTimeout(async () => {
             controller?.abort();
@@ -54,8 +62,16 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                     credentials: 'same-origin',
                 });
                 if (res.ok) estimate.set(await res.json());
-                // Rejected input (e.g. a size out of range): don't leave the last price standing as if it applied.
-                else if (controller === ctrl) estimate.update((prev) => (prev ? { ...prev, invalid: true } : prev));
+                // Rejected input (e.g. a size out of range): don't leave the last price standing as if it applied,
+                // and say what to fix.
+                else if (res.status === 422 && controller === ctrl) {
+                    const json = (await res.json().catch(() => null)) as { errors?: Record<string, string[]>; message?: string } | null;
+                    const first = json?.errors ? Object.values(json.errors)[0]?.[0] : json?.message;
+                    estimate.update((prev) => ({ ...(prev ?? ({} as LineEstimate)), invalid: true, invalid_message: first }));
+                } else if (controller === ctrl) {
+                    // Busy or offline: try again on the next change.
+                    lastBody = null;
+                }
             } catch {
                 /* aborted or offline: ignore */
             } finally {
@@ -89,7 +105,7 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                             }
                         </div>
                         @if (invalid()) {
-                            <div class="text-sm text-amber-700 dark:text-amber-400">Check the size and options</div>
+                            <div class="text-sm text-amber-700 dark:text-amber-400">{{ invalidText() }}</div>
                         } @else if (e(); as est) {
                             <div class="text-lg font-semibold tabular-nums">
                                 {{ range(est.unit_low, est.unit_high) }}
@@ -176,6 +192,16 @@ export class PriceEstimateBox {
     readonly inline = input(false);
     protected open = signal(false);
     protected invalid = computed(() => !!(this.estimate() as LiveEstimate | null)?.invalid);
+    /** The server's message in plain words ("The width mm field…" → "The width…"), else a general hint. */
+    protected invalidText = computed(() => {
+        const m = (this.estimate() as LiveEstimate | null)?.invalid_message;
+        return m
+            ? m
+                  .replace(/ mm field/g, '')
+                  .replace(/ id field/g, '')
+                  .replace(/_/g, ' ')
+            : 'Check the size and options';
+    });
     protected e = computed(() => (this.estimate()?.available ? this.estimate() : null));
     protected qty = computed(() => this.estimate()?.quantity ?? 1);
     protected readonly LoaderCircle = LoaderCircle;
@@ -211,11 +237,21 @@ export class PriceEstimateBox {
                 @if ((estimate()!.quantity ?? 1) > 1) {
                     <span class="text-muted-foreground text-xs"> for {{ estimate()!.quantity }}</span>
                 }
+                @if (notIncluded(); as missing) {
+                    <div class="text-xs text-amber-700 dark:text-amber-400">Not included yet: {{ missing }}</div>
+                }
             </div>
         }
     `,
 })
 export class LineEstimateTag {
+    /** What the estimate leaves out (e.g. a frame still to be advised), so a low figure isn't read as the price. */
+    protected notIncluded = computed(() =>
+        (this.estimate()?.pending ?? [])
+            .filter((p) => p !== 'Choose an artist')
+            .join(', ')
+            .toLowerCase(),
+    );
     readonly estimate = input<LineEstimate | undefined>(undefined);
     protected show = computed(() => {
         const e = this.estimate();

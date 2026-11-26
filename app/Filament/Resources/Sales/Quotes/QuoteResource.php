@@ -11,7 +11,6 @@ use App\Filament\Resources\Sales\Quotes\Pages\ListQuotes;
 use App\Filament\Support\MoneyInput;
 use App\Models\Artist;
 use App\Models\EnquiryLine;
-use App\Models\WorkCharge;
 use App\Models\Quote;
 use App\Providers\Filament\AdminPanelProvider;
 use App\Support\Money;
@@ -98,7 +97,7 @@ class QuoteResource extends Resource
         return $schema->columns(['default' => 1, 'lg' => 1, '2xl' => 3])->components([
             Grid::make(1)->columnSpan(['default' => 1, '2xl' => 2])->schema([
                 Section::make('Artworks')
-                    ->description('Unit price = calculated price + labour + work after the artwork. Type a different price to override it.')
+                    ->description('Unit price = calculated price + labour. Type a different price to override it.')
                     ->schema([
                         Repeater::make('lines')
                             ->relationship('lines')
@@ -151,43 +150,6 @@ class QuoteResource extends Resource
                                             ->columnSpanFull(),
                                     ]),
 
-                                Fieldset::make('Work after the artwork')
-                                    ->columns(1)
-                                    ->schema([
-                                        Hidden::make('work_applied')->dehydrated(false)
-                                            ->afterStateHydrated(fn (Hidden $component, Get $get) => $component->state(self::workTotal($get))),
-                                        Repeater::make('work_items')
-                                            ->hiddenLabel()
-                                            ->addActionLabel('Add work (cutting, mounting, installation…)')
-                                            ->defaultItems(0)
-                                            ->reorderable(false)
-                                            ->columns(['default' => 1, 'sm' => 3])
-                                            ->live()
-                                            ->afterStateUpdated(fn (Get $get, Set $set) => self::applyWork($get, $set))
-                                            ->schema([
-                                                Hidden::make('name'),
-                                                Select::make('work_charge_id')
-                                                    ->label('Work')
-                                                    ->options(fn () => WorkCharge::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')
-                                                        ->get()->mapWithKeys(fn (WorkCharge $w) => [$w->id => $w->name.' · '.Money::format($w->amount)])->all())
-                                                    ->required()
-                                                    ->native(false)
-                                                    ->live()
-                                                    ->afterStateUpdated(function ($state, Get $get, Set $set): void {
-                                                        $work = $state ? WorkCharge::find($state) : null;
-                                                        $set('name', $work?->name);
-                                                        $set('amount', Money::toRupees($work?->amount ?? 0));
-                                                        self::applyWork($get, $set, '../../');
-                                                    })
-                                                    ->columnSpan(['default' => 1, 'sm' => 2]),
-                                                MoneyInput::make('amount')->label('Amount (per piece)')->default(0)->required()
-                                                    ->dehydrateStateUsing(fn ($state): int => self::paise($state))
-                                                    ->live(onBlur: true)
-                                                    ->afterStateUpdated(fn (Get $get, Set $set) => self::applyWork($get, $set, '../../'))
-                                                    ->helperText('From Work charges; change it for this quote.'),
-                                            ]),
-                                    ]),
-
                                 Section::make('Price breakdown')
                                     ->description(fn (Get $get) => self::breakdownSummary($get))
                                     ->visible(fn (Get $get) => self::lineBreakdown($get) !== null)
@@ -200,7 +162,6 @@ class QuoteResource extends Resource
                                                 ? new HtmlString(view('filament.quotes.line-breakdown', [
                                                     'b' => $b,
                                                     'labour' => self::paise($get('labour_amount')),
-                                                    'work' => self::workRows($get),
                                                     'quoted' => self::quotedUnitPrice($get),
                                                 ])->render())
                                                 : null)
@@ -480,13 +441,8 @@ class QuoteResource extends Resource
             return null;
         }
         $labour = self::paise($get('labour_amount'));
-        $work = self::workTotal($get);
-        $parts = collect($b['components'])->pluck('label')
-            ->when($labour > 0, fn ($c) => $c->push('Labour'))
-            ->merge(array_column(self::workRows($get), 'name'))
-            ->implode(' + ');
 
-        return ($parts ?: 'Nothing priced yet').' → '.Money::format((int) $b['unit_price'] + $labour + $work);
+        return '₹'.number_format(round(((int) $b['unit_price'] + $labour) / 100)).' per piece — open to see what it is made of';
     }
 
     private static function quotedUnitPrice(Get $get): ?int
@@ -512,54 +468,13 @@ class QuoteResource extends Resource
         $typedOwn = self::paise($get($p.'unit_price')) !== (int) $get($p.'calculated_unit_price');
 
         $price = app(QuoteBuilder::class)->linePrice($line, $line->enquiry,
-            $get($p.'artist_id') ? (int) $get($p.'artist_id') : null, self::paise($get($p.'labour_amount')), self::workTotal($get, $p));
+            $get($p.'artist_id') ? (int) $get($p.'artist_id') : null, self::paise($get($p.'labour_amount')));
         $set($p.'calculated_unit_price', $price['calculated_unit_price']);
         $set($p.'unit_cost', $price['unit_cost']);
         $set($p.'breakdown', $price['breakdown']);
-        $set($p.'work_applied', self::workTotal($get, $p));
         if (! $typedOwn) {
             $set($p.'unit_price', Money::toRupees($price['unit_price']));
         }
-    }
-
-    /**
-     * Work after the artwork as typed on the line ($p = path from where this is called to the line).
-     *
-     * @return list<array{name: string, amount: int}>
-     */
-    private static function workRows(Get $get, string $p = ''): array
-    {
-        return collect($get($p.'work_items') ?? [])
-            ->filter(fn ($i) => is_array($i) && ($i['work_charge_id'] ?? null))
-            ->map(fn (array $i) => [
-                'name' => (string) (($i['name'] ?? null) ?: WorkCharge::find($i['work_charge_id'])?->name ?? 'Work'),
-                'amount' => self::paise($i['amount'] ?? 0),
-            ])
-            ->values()->all();
-    }
-
-    private static function workTotal(Get $get, string $p = ''): int
-    {
-        return (int) array_sum(array_column(self::workRows($get, $p), 'amount'));
-    }
-
-    /**
-     * Work changed: lines from an enquiry are re-priced; on a hand-added line the difference is
-     * added to the unit price.
-     */
-    private static function applyWork(Get $get, Set $set, string $p = ''): void
-    {
-        if ($get($p.'enquiry_line_id')) {
-            self::reprice($get, $set, $p);
-
-            return;
-        }
-        $total = self::workTotal($get, $p);
-        $delta = $total - (int) $get($p.'work_applied');
-        if ($delta !== 0) {
-            $set($p.'unit_price', Money::toRupees(max(0, self::paise($get($p.'unit_price')) + $delta)));
-        }
-        $set($p.'work_applied', $total);
     }
 
     /**

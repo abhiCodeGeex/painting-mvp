@@ -4,105 +4,125 @@
     /** @var array $b pricing engine result for this line */
     /** @var int $labour labour per piece entered on the quote line (paise) */
     /** @var ?int $quoted unit price currently on the quote line (paise) */
-    /** @var list<array{name: string, amount: int}> $work work after the artwork (paise per piece) */
     $labour = (int) ($labour ?? 0);
-    $work = $work ?? [];
     $engine = (int) ($b['unit_price'] ?? 0);
     $cost = (int) ($b['unit_cost'] ?? 0);
-    $calculated = $engine + $labour + array_sum(array_column($work, 'amount'));
-    $markup = rtrim(rtrim(number_format((float) ($b['markup_percent'] ?? 0), 2), '0'), '.');
+    $calculated = $engine + $labour;
+    $charged = ($quoted !== null && $quoted !== $calculated) ? $quoted : $calculated;
 
-    $muted = 'opacity:.65;font-size:.8rem;line-height:1.35';
-    $rule = 'border-top:1px solid rgba(127,127,127,.25)';
-    $cell = 'padding:.4rem .75rem .4rem 0;vertical-align:top';
-    $num = 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;padding:.4rem 0;vertical-align:top';
-    $margin = fn (int $price) => Money::format($price - $cost).($price > 0 ? ' ('.round(($price - $cost) / $price * 100, 1).'%)' : '');
+    // Whole rupees everywhere: the quote rounds to ₹1, and paise only add noise when reading.
+    $inr = fn (int $paise): string => '₹'.number_format(round($paise / 100));
+
+    // "₹850.00/m (Antique gold…, 40 mm profile)" → "₹850 per m"
+    $rate = function (?string $text): string {
+        $text = preg_replace('/\s*\([^)]*\)/', '', (string) $text);
+        $text = preg_replace('/(\d)\.\d{2}\b/', '$1', $text);
+        $text = preg_replace('/\/m²/', ' per m²', $text);
+        $text = preg_replace('/\/m\b/', ' per m', $text);
+
+        return trim($text);
+    };
+    $num = fn (string $s) => preg_replace_callback('/(\d+\.\d{3,})/', fn ($x) => rtrim(rtrim(number_format((float) $x[1], 2), '0'), '.'), $s);
+    $after = fn (string $s) => trim(str_contains($s, '=') ? substr($s, strrpos($s, '=') + 1) : $s);
+
+    // One plain sentence: how much of it, at what rate.
+    $how = function (array $c) use ($rate, $num, $after): string {
+        $m = (string) ($c['measure'] ?? '');
+        $key = (string) ($c['key'] ?? '');
+        $r = $rate($c['rate'] ?? null);
+
+        if (str_starts_with($key, 'frame')) {
+            preg_match_all('/=\s*([\d.]+\s*m)\b/', $m, $all);
+            $length = $num(end($all[1]) ?: $m);
+            preg_match('/(\d+)% waste/', $m, $waste);
+            $extra = ! empty($waste) ? ' (incl. corners and '.$waste[1].'% extra for cutting)' : ' (incl. corners)';
+
+            return $length.' of moulding'.($r ? ' at '.$r : '').$extra;
+        }
+        if (str_contains($m, '· edge') && str_contains($r, '+')) {
+            [$area, $edge] = array_map('trim', explode('· edge', $m, 2));
+            [$areaRate, $edgeRate] = array_map('trim', explode('+', $r, 2));
+
+            return $num($after($area)).' at '.$areaRate.', plus '.$num($after($edge)).' of edge at '.str_replace(' of edge', '', $edgeRate);
+        }
+        // "100 × 93 cm = 0.93 m²" → "0.93 m² (100 × 93 cm) at ₹9,500 per m²"
+        if (preg_match('/^([^=]+?)\s*=\s*([^=]+)$/u', $m, $p)) {
+            return $num(trim($p[2])).' ('.trim($p[1]).')'.($r ? ' at '.$r : '');
+        }
+
+        return $num($m).($r ? ' at '.$r : '');
+    };
+
+    // A clear name for each part.
+    $name = fn (array $c): string => match ((string) ($c['key'] ?? '')) {
+        'substrate' => 'Surface — '.$c['label'],
+        'glazing' => 'Glass — '.$c['label'],
+        'mat' => 'Mat — '.$c['label'],
+        default => (string) $c['label'],
+    };
+
+    $markup = rtrim(rtrim(number_format((float) ($b['markup_percent'] ?? 0), 2), '0'), '.');
+    $profit = $charged - $cost;
+    $profitPct = $charged > 0 ? round($profit / $charged * 100) : 0;
 @endphp
 
-<div style="font-size:.875rem;line-height:1.45;overflow-x:auto">
-    @if (! empty($b['pending']))
-        <div style="margin-bottom:.5rem;padding:.4rem .6rem;border-radius:.375rem;background:rgba(245,158,11,.12)">
-            Still to decide: {{ implode(' · ', $b['pending']) }}
+<style>
+    .pb { display: grid; gap: 1.25rem 2rem; grid-template-columns: minmax(0, 1fr); font-size: .875rem; line-height: 1.45; }
+    @container (min-width: 40rem) { .pb { grid-template-columns: minmax(0, 1fr) 15rem; } }
+    .pb-wrap { container-type: inline-size; }
+    .pb-eyebrow { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; opacity: .55; margin-bottom: .5rem; }
+    .pb-item { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-top: 1px solid rgba(127, 127, 127, .15); }
+    .pb-eyebrow + .pb-item { border-top: 0; padding-top: 0; }
+    .pb-how { opacity: .6; font-size: .78rem; margin-top: .1rem; }
+    .pb-amt { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pb-card { align-self: start; border-radius: .75rem; padding: 1rem; background: rgba(127, 127, 127, .07); display: grid; gap: .4rem; }
+    .pb-line { display: flex; justify-content: space-between; gap: .75rem; }
+    .pb-total { font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .pb-sep { border-top: 1px solid rgba(127, 127, 127, .2); margin: .35rem 0; }
+    .pb-note { opacity: .6; font-size: .75rem; }
+    .pb-pending { grid-column: 1 / -1; padding: .5rem .75rem; border-radius: .5rem; background: rgba(245, 158, 11, .14); }
+</style>
+
+<div class="pb-wrap">
+    <div class="pb">
+        @if (! empty($b['pending']))
+            <div class="pb-pending"><strong>Not finished:</strong> {{ implode(' · ', $b['pending']) }}</div>
+        @endif
+
+        {{-- What one piece is made of. --}}
+        <div>
+            <div class="pb-eyebrow">What goes into one piece</div>
+            @foreach ($b['components'] ?? [] as $c)
+                <div class="pb-item">
+                    <div>
+                        <div>{{ $name($c) }}</div>
+                        <div class="pb-how">{{ $how($c) }}</div>
+                    </div>
+                    <div class="pb-amt">{{ $inr((int) $c['sell']) }}</div>
+                </div>
+            @endforeach
         </div>
-    @endif
 
-    <table style="width:100%;border-collapse:collapse">
-        <thead>
-            <tr style="{{ $muted }}">
-                <th style="text-align:left;font-weight:500;padding:0 .75rem .25rem 0">Component</th>
-                <th style="text-align:left;font-weight:500;padding:0 .75rem .25rem 0">How it's measured</th>
-                <th style="text-align:left;font-weight:500;padding:0 .75rem .25rem 0">Rate</th>
-                <th style="text-align:right;font-weight:500;padding:0 0 .25rem">Amount</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach ($b['components'] ?? [] as $row)
-                <tr style="{{ $rule }}">
-                    <td style="{{ $cell }}">
-                        <div style="font-weight:500">{{ $row['label'] }}</div>
-                        <div style="{{ $muted }}">
-                            {{ ($row['marked_up'] ?? $row['cost'] > 0)
-                                ? 'Cost '.Money::format((int) $row['cost']).' + '.$markup.'% markup'
-                                : 'Selling price' }}
-                        </div>
-                    </td>
-                    <td style="{{ $cell }};{{ $muted }}">{{ $row['measure'] ?? '' }}</td>
-                    <td style="{{ $cell }};{{ $muted }}">{{ $row['rate'] ?? '' }}</td>
-                    <td style="{{ $num }}">{{ Money::format((int) $row['sell']) }}</td>
-                </tr>
-            @endforeach
-
-            <tr style="{{ $rule }};font-weight:500">
-                <td style="{{ $cell }}" colspan="3">Subtotal per piece</td>
-                <td style="{{ $num }}">{{ Money::format((int) ($b['unit_sell'] ?? 0)) }}</td>
-            </tr>
-
-            @foreach ($b['adjustments'] ?? [] as $adj)
-                <tr>
-                    <td style="padding:.15rem 0" colspan="3">{{ $adj['label'] }}</td>
-                    <td style="{{ $num }};padding:.15rem 0">{{ $adj['amount'] < 0 ? '− '.Money::format(-$adj['amount']) : '+ '.Money::format($adj['amount']) }}</td>
-                </tr>
-            @endforeach
-
-            @if ($labour > 0)
-                <tr>
-                    <td style="padding:.15rem 0" colspan="3">
-                        Labour (entered on quote)
-                        <span style="{{ $muted }}">· per piece, no markup</span>
-                    </td>
-                    <td style="{{ $num }};padding:.15rem 0">+ {{ Money::format($labour) }}</td>
-                </tr>
+        {{-- The price, and what we keep. --}}
+        <div class="pb-card">
+            <div class="pb-eyebrow" style="margin-bottom:0">Price per piece</div>
+            <div class="pb-total">{{ $inr($charged) }}</div>
+            @if ($charged !== $calculated)
+                <div class="pb-note">Typed by hand · calculated {{ $inr($calculated) }}</div>
             @endif
 
-            @foreach ($work as $item)
-                <tr>
-                    <td style="padding:.15rem 0" colspan="3">
-                        Work: {{ $item['name'] }}
-                        <span style="{{ $muted }}">· after the artwork, per piece</span>
-                    </td>
-                    <td style="{{ $num }};padding:.15rem 0">+ {{ Money::format($item['amount']) }}</td>
-                </tr>
-            @endforeach
+            <div class="pb-sep"></div>
+            <div class="pb-line"><span>Artwork &amp; materials</span><span class="pb-amt">{{ $inr($engine) }}</span></div>
+            <div class="pb-line"><span>Labour</span><span class="pb-amt">{{ $labour > 0 ? '+ '.$inr($labour) : '—' }}</span></div>
 
-            <tr style="{{ $rule }};font-weight:600">
-                <td style="{{ $cell }}" colspan="3">Calculated unit price</td>
-                <td style="{{ $num }}">{{ Money::format($calculated) }}</td>
-            </tr>
-            <tr style="{{ $muted }}">
-                <td style="padding:0 0 .2rem" colspan="3">Margin over material cost {{ Money::format($cost) }}</td>
-                <td style="{{ $num }};padding:0 0 .2rem">{{ $margin($calculated) }}</td>
-            </tr>
-
-            @if ($quoted !== null && $quoted !== $calculated)
-                <tr style="font-weight:500">
-                    <td style="padding:.2rem 0" colspan="3">Quoted unit price (changed by hand)</td>
-                    <td style="{{ $num }};padding:.2rem 0">{{ Money::format($quoted) }}</td>
-                </tr>
-                <tr style="{{ $muted }}">
-                    <td style="padding:0" colspan="3">Margin at quoted price</td>
-                    <td style="{{ $num }};padding:0">{{ $margin($quoted) }}</td>
-                </tr>
+            <div class="pb-sep"></div>
+            <div class="pb-line"><span>Our cost</span><span class="pb-amt">{{ $inr($cost) }}</span></div>
+            <div class="pb-line" style="font-weight:600;color:{{ $profit < 0 ? '#dc2626' : 'inherit' }}">
+                <span>Profit</span><span class="pb-amt">{{ $inr($profit) }} · {{ $profitPct }}%</span>
+            </div>
+            @if ((float) $markup > 0)
+                <div class="pb-note" style="margin-top:.25rem">Material rates shown are our cost; amounts include our {{ $markup }}% margin.</div>
             @endif
-        </tbody>
-    </table>
+        </div>
+    </div>
 </div>

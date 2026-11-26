@@ -274,6 +274,19 @@ describe('portal', function () {
             ->assertSessionHasErrors(['artwork_id', 'frame_layers.1.frame_id']);
     });
 
+    it('checks an outer size against the picture inside the frames', function () use ($payload) {
+        // Frame A (20 mm) can hold at most a 600 mm opening. Outer 640 × 440 with frame A → picture 596 × 396 (2 mm rebate each side): fits.
+        $this->frameA->update(['max_inner_width_mm' => 600, 'max_inner_height_mm' => 600]);
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload([
+            'size_reference' => 'outer', 'width_mm' => 640, 'height_mm' => 440, 'frame_id' => $this->frameA->id,
+        ]))->assertSessionHasNoErrors();
+
+        // The same numbers as a picture size don't fit.
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload([
+            'size_reference' => 'image', 'width_mm' => 640, 'height_mm' => 440, 'frame_id' => $this->frameA->id,
+        ]))->assertSessionHasErrors('frame_id');
+    });
+
     it('prices stacked frames in the live estimate', function () use ($payload) {
         $response = $this->postJson(route('portal.enquiries.estimate', $this->enquiry), $payload([
             'frame_id' => $this->frameA->id,

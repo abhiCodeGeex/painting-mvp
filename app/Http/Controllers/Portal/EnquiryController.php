@@ -72,7 +72,8 @@ class EnquiryController extends PortalController
         return Inertia::render('enquiries/show', [
             'enquiry' => EnquiryPresenter::detail($enquiry),
             'messages' => $enquiry->messages()->with('media', 'author')->get()->map(fn (Message $m) => EnquiryPresenter::message($m))->values(),
-            'quotes' => $enquiry->quotes()->whereNotNull('sent_at')->with('lines', 'extras')->get()->map(fn (Quote $q) => EnquiryPresenter::quote($q))->values(),
+            'quotes' => ($quotes = $enquiry->quotes()->whereNotNull('sent_at')->with('lines', 'extras')->get())
+                ->map(fn (Quote $q) => EnquiryPresenter::quote($q, (int) $quotes->max('version')))->values(),
             'options' => CatalogOptions::forEditor(),
             'rejectionReasons' => RejectionReason::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')
                 ->get(['id', 'name', 'requires_comment'])->values(),
@@ -125,7 +126,9 @@ class EnquiryController extends PortalController
         $data = $request->validate([
             'project_name' => ['required', 'string', 'max:255'],
             'project_type' => ['required', Rule::enum(ProjectType::class)],
-            'delivery_address_id' => ['nullable', Rule::exists('addresses', 'id')->where('customer_id', $enquiry->customer_id)->whereNull('deleted_at')],
+            // A delivery address of this customer (never a billing one: it drives GST and the delivery).
+            'delivery_address_id' => ['nullable', Rule::exists('addresses', 'id')->where('customer_id', $enquiry->customer_id)
+                ->where('kind', AddressKind::Delivery->value)->whereNull('deleted_at')],
             'required_by' => ['nullable', 'date', 'after:today'],
             'budget_range' => ['nullable', Rule::enum(BudgetRange::class)],
             'installation_needed' => ['boolean'],

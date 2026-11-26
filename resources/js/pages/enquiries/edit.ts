@@ -10,11 +10,12 @@ import { AppLayout } from '@/layouts/app-layout';
 import { formatDate, formatInrRange } from '@/lib/units';
 import type { Address, CatalogOptions, EnquiryDetail, EnquiryEstimate, EnquiryLine, ProjectOptions } from '@/types/portal';
 import { UiCheckbox } from '@/ui/checkbox';
+import { Confirm } from '@/ui/confirm';
 import { FormField } from '@/ui/field';
 import { Icon } from '@/ui/icon';
 import { UI } from '@/ui/primitives';
 import { InputError } from '@/ui/text';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import { ArrowLeft, ArrowRight, Check, Copy, LayoutGrid, LoaderCircle, Pencil, Plus, Send, Trash2, UserCog } from 'lucide';
 
 interface Props {
@@ -226,7 +227,12 @@ export class ProjectStep {
                 this.form.setAll({
                     project_name: e.project_name,
                     project_type: e.project_type ?? 'home',
-                    delivery_address_id: e.delivery_address_id ? String(e.delivery_address_id) : addresses[0] ? String(addresses[0].id) : '',
+                    // Only an address that is still listed (one deleted in Settings can't be shown or saved).
+                    delivery_address_id: addresses.some((a) => a.id === e.delivery_address_id)
+                        ? String(e.delivery_address_id)
+                        : addresses[0]
+                          ? String(addresses[0].id)
+                          : '',
                     required_by: e.required_by ?? '',
                     budget_range: e.budget_range ?? '',
                     installation_needed: e.installation_needed,
@@ -234,18 +240,59 @@ export class ProjectStep {
                     notes: e.notes ?? '',
                 }),
             );
+            this.saved = JSON.stringify(this.form.data());
+        });
+
+        // "Saved automatically as you go": a moment after the last change, the project details are saved
+        // (only once they are valid enough to save — a name is required).
+        let autosave: ReturnType<typeof setTimeout> | null = null;
+        effect(() => {
+            const data = this.form.data();
+            if (!this.saved || JSON.stringify(data) === this.saved || !data.project_name.trim()) return;
+            if (autosave) clearTimeout(autosave);
+            autosave = setTimeout(() => {
+                if (!this.form.processing()) this.saveThen(() => undefined);
+            }, 1200);
+        });
+        // Closing or reloading the tab with changes not saved yet: the browser asks first.
+        const beforeUnload = (e: BeforeUnloadEvent) => {
+            if (this.saved && JSON.stringify(this.form.data()) !== this.saved) e.preventDefault();
+        };
+        window.addEventListener('beforeunload', beforeUnload);
+        inject(DestroyRef).onDestroy(() => {
+            window.removeEventListener('beforeunload', beforeUnload);
+            if (autosave) clearTimeout(autosave);
         });
 
         // A newly added address is selected automatically.
         effect(() => {
             const id = (this.router.page().props as { flash?: { created_address_id?: number | null } }).flash?.created_address_id;
-            if (id) untracked(() => this.form.set('delivery_address_id', String(id)));
+            // Only a delivery address that is listed here (never one that wouldn't show as selected).
+            if (id && this.addresses().some((a) => a.id === id)) untracked(() => this.form.set('delivery_address_id', String(id)));
         });
     }
 
+    /** The form as last saved: leaving the step with changes saves them first. */
+    private saved = '';
+
     submit(event: Event): void {
         event.preventDefault();
-        this.form.put(route('portal.enquiries.update', this.enquiry().id), { preserveScroll: true, onSuccess: () => this.done.emit() });
+        this.saveThen(() => this.done.emit(), true);
+    }
+
+    /** Saves changes (if any) and then moves on; on a validation error the step stays open with the errors. */
+    saveThen(next: () => void, always = false): void {
+        if (!always && JSON.stringify(this.form.data()) === this.saved) {
+            next();
+            return;
+        }
+        this.form.put(route('portal.enquiries.update', this.enquiry().id), {
+            preserveScroll: true,
+            onSuccess: () => {
+                this.saved = JSON.stringify(this.form.data());
+                next();
+            },
+        });
     }
 }
 
@@ -312,7 +359,7 @@ export class ProjectStep {
                                     'flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ' +
                                     (i === step() ? 'border-primary bg-primary/5 font-medium' : 'text-muted-foreground hover:bg-muted')
                                 "
-                                (click)="step.set(i)"
+                                (click)="goStep(i)"
                             >
                                 <span
                                     [class]="
@@ -496,6 +543,14 @@ export default class EditEnquiry {
     private router = inject(InertiaRouter);
     protected enquiry = computed(() => this.props().enquiry);
     protected step = signal(this.props().enquiry.lines.length > 0 ? 1 : 0);
+    private projectStep = viewChild(ProjectStep);
+
+    /** Step tabs: leaving the project step saves its changes first (it says "saved automatically as you go"). */
+    protected goStep(i: number): void {
+        const project = this.projectStep();
+        if (this.step() === 0 && i !== 0 && project) project.saveThen(() => this.step.set(i));
+        else this.step.set(i);
+    }
     protected readonly steps = ['Project', 'Artworks', 'Review & send'];
     protected editing = signal<EnquiryLine | null>(null);
     protected editorOpen = signal(false);
@@ -560,13 +615,26 @@ export default class EditEnquiry {
         this.router.post(route('portal.enquiries.lines.duplicate', [this.enquiry().id, line.id]), {}, { preserveScroll: true });
     }
 
-    removeLine(line: EnquiryLine): void {
-        if (confirm('Remove this artwork?'))
-            this.router.delete(route('portal.enquiries.lines.destroy', [this.enquiry().id, line.id]), { preserveScroll: true });
+    private confirm = inject(Confirm);
+
+    async removeLine(line: EnquiryLine): Promise<void> {
+        const ok = await this.confirm.ask({
+            title: 'Remove this artwork?',
+            message: line.display_title + ' will be taken out of this enquiry.',
+            confirm: 'Remove',
+            destructive: true,
+        });
+        if (ok) this.router.delete(route('portal.enquiries.lines.destroy', [this.enquiry().id, line.id]), { preserveScroll: true });
     }
 
-    deleteDraft(): void {
-        if (confirm('Delete this draft?')) this.router.delete(route('portal.enquiries.destroy', this.enquiry().id));
+    async deleteDraft(): Promise<void> {
+        const ok = await this.confirm.ask({
+            title: 'Delete this draft?',
+            message: 'The draft and all its artworks will be deleted. This can’t be undone.',
+            confirm: 'Delete draft',
+            destructive: true,
+        });
+        if (ok) this.router.delete(route('portal.enquiries.destroy', this.enquiry().id));
     }
 
     send(): void {

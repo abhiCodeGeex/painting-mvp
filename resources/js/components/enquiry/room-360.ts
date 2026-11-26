@@ -37,7 +37,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { ArView } from './ar-view';
 import { framesWidth, WALL_COLOURS, type WallPiece } from './preview-helpers';
 import { onFrameStripLoaded } from './three/moulding';
-import { buildArtwork, coverTexture, disposeTree, gradientTexture, M } from './three/scene-parts';
+import { buildArtwork, coverTexture, disposeTree, gradientTexture, M, plainTexture } from './three/scene-parts';
 
 /**
  * Photoreal 360° room (spec: "Hybrid 360° rooms").
@@ -343,11 +343,12 @@ function weaveNormalMap(): THREE.Texture {
                 }
             </div>
 
-            @if (loadingHd()) {
+            @if (artLoading() || loadingHd()) {
                 <div
                     class="absolute top-2 right-2 flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 text-[11px] text-white/85 backdrop-blur"
+                    aria-live="polite"
                 >
-                    <svg [icon]="LoaderCircle" class="size-3 animate-spin" /> Sharpening…
+                    <svg [icon]="LoaderCircle" class="size-3 animate-spin" /> {{ artLoading() ? 'Loading your artwork…' : 'Sharpening…' }}
                 </div>
             }
 
@@ -614,9 +615,14 @@ export class Room360 implements OnDestroy {
     /** Cropped copies of the pictures made for the current pieces (freed on rebuild). */
     private pieceTextures: THREE.Texture[] = [];
     private pendingPictures = new Set<string>();
+    private failedPictures = new Set<string>();
     private envTimer = 0;
     private textures = new Map<string, THREE.Texture>();
     private placeholder = gradientTexture();
+    /** While the customer's picture downloads: a plain card, so it is never mistaken for another painting. */
+    private loadingPicture = plainTexture('#e7e3dd');
+    /** A picture is still downloading (shown as "Loading your artwork…"). */
+    protected artLoading = signal(false);
     private pictureVersion = signal(0);
     private loadToken = 0;
     /** Changes when a room's textures are replaced: furniture loads for an earlier room are thrown away. */
@@ -809,7 +815,7 @@ export class Room360 implements OnDestroy {
         // Esc closes the furniture panel first, wherever the focus is — caught before it reaches the page (which
         // would otherwise close the dialog the viewer sits in). From inside the panel, focus returns to its button.
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape' || !this.furnitureOpen()) return;
+            if (e.key !== 'Escape' || !this.furnitureOpen() || this.arOpen()) return;
             e.stopPropagation();
             e.preventDefault();
             this.closeFurniture(!!this.furniturePanel()?.nativeElement.contains(e.target as Node));
@@ -1469,7 +1475,15 @@ export class Room360 implements OnDestroy {
         this.pieceTextures.splice(0).forEach((t) => t.dispose());
         this.pixelated = false; // the new picture textures start smooth; the next frame decides again
         const { placed, tooBig } = this.layout(meta);
-        this.notice.set(tooBig ? 'Your artwork is larger than the free space on this wall — try a bigger room, such as the Hotel lobby.' : '');
+        let loading = false;
+        const failed = this.pieces().some((p) => p.imageUrl && this.failedPictures.has(p.imageUrl));
+        this.notice.set(
+            tooBig
+                ? 'Your artwork is larger than the free space on this wall — try a bigger room, such as the Hotel lobby.'
+                : failed
+                  ? 'The artwork image could not be loaded — please reload the page.'
+                  : '',
+        );
         this.pieceGroups.clear();
         for (const { piece, d, x, y, key } of placed) {
             const group = buildArtwork(d, {
@@ -1489,6 +1503,9 @@ export class Room360 implements OnDestroy {
                 ),
             });
             group.position.set(x, y, -meta.artWall.distance + 0.002);
+            group.traverse((o) => {
+                if (Room360.pictureMaps(o).includes(this.loadingPicture)) loading = true;
+            });
             group.userData['pieceKey'] = key;
             this.pieceGroups.set(key, group);
             group.traverse((o) => {
@@ -1502,6 +1519,7 @@ export class Room360 implements OnDestroy {
             this.art.add(group);
             if (this.inspecting() && (piece.depthMm > 0 || !piece.frame)) this.addCanvasWeave(group);
         }
+        this.artLoading.set(loading);
         this.requestFrame();
     }
 
@@ -1551,7 +1569,7 @@ export class Room360 implements OnDestroy {
     }
 
     private pictureTexture(url: string | null, picW: number, picH: number, fallback: string | null = null, rotation = 0): THREE.Texture {
-        if (!url) return this.placeholder;
+        if (!url || this.failedPictures.has(url)) return this.placeholder;
         if (fallback && fallback !== url && !this.textures.has(url) && this.textures.has(fallback)) {
             this.pictureTexture(url, picW, picH); // start loading the sharper one
             return this.pictureTexture(fallback, picW, picH, null, rotation);
@@ -1562,7 +1580,7 @@ export class Room360 implements OnDestroy {
             if (cropped !== loaded) this.pieceTextures.push(cropped);
             return cropped;
         }
-        if (this.pendingPictures.has(url)) return this.placeholder;
+        if (this.pendingPictures.has(url)) return this.loadingPicture;
         this.pendingPictures.add(url);
         new THREE.TextureLoader().load(
             url,
@@ -1579,9 +1597,16 @@ export class Room360 implements OnDestroy {
                 this.pictureVersion.update((v) => v + 1);
             },
             undefined,
-            () => this.pendingPictures.delete(url),
+            () => {
+                // Couldn't download: show the sample instead of a loading card forever, and say so.
+                this.pendingPictures.delete(url);
+                if (this.destroyed) return;
+                this.failedPictures.add(url);
+                this.notice.set('The artwork image could not be loaded — please reload the page.');
+                this.pictureVersion.update((v) => v + 1);
+            },
         );
-        return this.placeholder;
+        return this.loadingPicture;
     }
 
     // ------------------------------------------------------------------ view
@@ -2221,6 +2246,9 @@ export class Room360 implements OnDestroy {
 
     /** Exports the artwork(s) — not the room — as a GLB for the AR viewer, centred on the arrangement. */
     private async openAr(): Promise<void> {
+        // The AR dialog lives on <body>: in full screen it would open hidden behind the room.
+        if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+        this.closeFurniture(false);
         this.arModel.set(null);
         this.arOpen.set(true);
         try {
@@ -2316,7 +2344,8 @@ export class Room360 implements OnDestroy {
                 const img = map.image as { width?: number; height?: number } | undefined;
                 // The picture is always upright (a swap only stretches it), so its width runs across the piece.
                 const across = (img?.width ?? 0) * map.repeat.x;
-                if (map !== this.placeholder && !(map as THREE.CanvasTexture).isCanvasTexture && across > 0) texels = Math.max(texels, across);
+                if (map !== this.placeholder && map !== this.loadingPicture && !(map as THREE.CanvasTexture).isCanvasTexture && across > 0)
+                    texels = Math.max(texels, across);
             }
         });
         if (!texels) return;
@@ -2326,7 +2355,7 @@ export class Room360 implements OnDestroy {
         this.pixelated = want;
         g.traverse((o) => {
             for (const map of Room360.pictureMaps(o)) {
-                if (map === this.placeholder || (map as THREE.CanvasTexture).isCanvasTexture) continue;
+                if (map === this.placeholder || map === this.loadingPicture || (map as THREE.CanvasTexture).isCanvasTexture) continue;
                 if (!(map.image as { width?: number } | undefined)?.width) continue;
                 map.magFilter = want ? THREE.NearestFilter : THREE.LinearFilter;
                 map.needsUpdate = true;
@@ -2470,6 +2499,7 @@ export class Room360 implements OnDestroy {
         this.pieceTextures.forEach((t) => t.dispose());
         this.textures.forEach((t) => t.dispose());
         this.placeholder.dispose();
+        this.loadingPicture.dispose();
         // Free the WebGL context itself: browsers allow only a few at once, and this view is
         // created and destroyed whenever the customer switches preview tabs.
         this.renderer.forceContextLoss();
