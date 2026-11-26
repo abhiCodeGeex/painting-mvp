@@ -117,5 +117,191 @@
     "u1": 0.766667,
     "v0": 0.354275,
     "v1": 0.751725
+  },
+  "layers": {
+    "empty": {
+      "faces": "<face>-empty.webp",
+      "mask": "<face>-empty-mask.webp",
+      "facesList": [
+        "f",
+        "r",
+        "b",
+        "l",
+        "d"
+      ],
+      "hasDetail": false,
+      "detailSkipped": true
+    },
+    "items": [
+      {
+        "key": "rug",
+        "label": "Rug",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-rug-f.webp",
+            "obj": "L-rug-f-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.245605
+            ]
+          },
+          "d": {
+            "file": "L-rug-d.webp",
+            "obj": "L-rug-d-obj.webp",
+            "rect": [
+              0.0,
+              0.679121,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "plant",
+        "label": "Plant",
+        "default": true,
+        "faces": {
+          "b": {
+            "file": "L-plant-b.webp",
+            "obj": "L-plant-b-obj.webp",
+            "rect": [
+              0.720215,
+              0.0,
+              1.0,
+              0.40625
+            ]
+          },
+          "l": {
+            "file": "L-plant-l.webp",
+            "obj": "L-plant-l-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.267578,
+              0.415039
+            ]
+          }
+        }
+      },
+      {
+        "key": "shelving",
+        "label": "Bookshelf",
+        "default": true,
+        "faces": {
+          "r": {
+            "file": "L-shelving-r.webp",
+            "obj": "L-shelving-r-obj.webp",
+            "rect": [
+              0.0,
+              0.022949,
+              0.970703,
+              0.741699
+            ]
+          }
+        }
+      },
+      {
+        "key": "desk",
+        "label": "Desk",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-desk-f.webp",
+            "obj": "L-desk-f-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.613281
+            ]
+          }
+        }
+      },
+      {
+        "key": "desk_plant",
+        "label": "Plant on the desk",
+        "default": false,
+        "faces": {
+          "f": {
+            "file": "L-desk_plant-f.webp",
+            "obj": "L-desk_plant-f-obj.webp",
+            "rect": [
+              0.369141,
+              0.349121,
+              0.464844,
+              0.430664
+            ]
+          }
+        }
+      },
+      {
+        "key": "chair",
+        "label": "Desk chair",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-chair-f.webp",
+            "obj": "L-chair-f-obj.webp",
+            "rect": [
+              0.045898,
+              0.0,
+              0.954102,
+              0.464355
+            ]
+          },
+          "d": {
+            "file": "L-chair-d.webp",
+            "obj": "L-chair-d-obj.webp",
+            "rect": [
+              0.0,
+              0.793407,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "key": "lounge_chair",
+        "label": "Lounge chair & side table",
+        "default": false,
+        "faces": {
+          "r": {
+            "file": "L-lounge_chair-r.webp",
+            "obj": "L-lounge_chair-r-obj.webp",
+            "rect": [
+              0.508301,
+              0.0,
+              1.0,
+              0.489746
+            ]
+          },
+          "b": {
+            "file": "L-lounge_chair-b.webp",
+            "obj": "L-lounge_chair-b-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.503418,
+              0.491211
+            ]
+          },
+          "d": {
+            "file": "L-lounge_chair-d.webp",
+            "obj": "L-lounge_chair-d-obj.webp",
+            "rect": [
+              0.545055,
+              0.0,
+              1.0,
+              0.435897
+            ]
+          }
+        }
+      }
+    ]
   }
 }

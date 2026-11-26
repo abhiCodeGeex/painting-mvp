@@ -117,5 +117,191 @@
     "u1": 0.735294,
     "v0": 0.328456,
     "v1": 0.799044
+  },
+  "layers": {
+    "empty": {
+      "faces": "<face>-empty.webp",
+      "mask": "<face>-empty-mask.webp",
+      "facesList": [
+        "f",
+        "r",
+        "b",
+        "l",
+        "d"
+      ],
+      "hasDetail": false,
+      "detailSkipped": true
+    },
+    "items": [
+      {
+        "key": "rug",
+        "label": "Rug",
+        "default": true,
+        "faces": {
+          "b": {
+            "file": "L-rug-b.webp",
+            "obj": "L-rug-b-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.305176
+            ]
+          },
+          "d": {
+            "file": "L-rug-d.webp",
+            "obj": "L-rug-d-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.552381
+            ]
+          }
+        }
+      },
+      {
+        "key": "plant",
+        "label": "Plant",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-plant-f.webp",
+            "obj": "L-plant-f-obj.webp",
+            "rect": [
+              0.0,
+              0.119141,
+              0.257324,
+              0.522949
+            ]
+          },
+          "l": {
+            "file": "L-plant-l.webp",
+            "obj": "L-plant-l-obj.webp",
+            "rect": [
+              0.821289,
+              0.060547,
+              1.0,
+              0.527344
+            ]
+          }
+        }
+      },
+      {
+        "key": "sideboard",
+        "label": "Sideboard",
+        "default": true,
+        "faces": {
+          "f": {
+            "file": "L-sideboard-f.webp",
+            "obj": "L-sideboard-f-obj.webp",
+            "rect": [
+              0.087891,
+              0.173828,
+              0.912109,
+              0.472656
+            ]
+          }
+        }
+      },
+      {
+        "key": "plant_right",
+        "label": "Second plant",
+        "default": false,
+        "faces": {
+          "f": {
+            "file": "L-plant_right-f.webp",
+            "obj": "L-plant_right-f-obj.webp",
+            "rect": [
+              0.633301,
+              0.083496,
+              1.0,
+              0.437988
+            ]
+          },
+          "r": {
+            "file": "L-plant_right-r.webp",
+            "obj": "L-plant_right-r-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              0.15625,
+              0.410156
+            ]
+          }
+        }
+      },
+      {
+        "key": "console",
+        "label": "Console table",
+        "default": false,
+        "faces": {
+          "l": {
+            "file": "L-console-l.webp",
+            "obj": "L-console-l-obj.webp",
+            "rect": [
+              0.391113,
+              0.083008,
+              1.0,
+              0.586426
+            ]
+          }
+        }
+      },
+      {
+        "key": "chairs",
+        "label": "Dining chairs",
+        "default": true,
+        "faces": {
+          "b": {
+            "file": "L-chairs-b.webp",
+            "obj": "L-chairs-b-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.442383
+            ]
+          },
+          "d": {
+            "file": "L-chairs-d.webp",
+            "obj": "L-chairs-d-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.354579
+            ]
+          }
+        }
+      },
+      {
+        "key": "table",
+        "label": "Dining table",
+        "default": true,
+        "faces": {
+          "b": {
+            "file": "L-table-b.webp",
+            "obj": "L-table-b-obj.webp",
+            "rect": [
+              0.0,
+              0.0,
+              1.0,
+              0.436035
+            ]
+          },
+          "d": {
+            "file": "L-table-d.webp",
+            "obj": "L-table-d-obj.webp",
+            "rect": [
+              0.027839,
+              0.0,
+              0.972161,
+              0.463736
+            ]
+          }
+        }
+      }
+    ]
   }
 }
