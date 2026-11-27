@@ -244,6 +244,14 @@ class EnquiryWorkflow
     }
 
     /**
+     * An order event (placed, paid, status changed): a note in the enquiry thread for both sides.
+     */
+    public function recordOrderEvent(Enquiry $enquiry, User $by, string $note): void
+    {
+        $this->systemMessage($enquiry, $note, by: $by);
+    }
+
+    /**
      * Assignee if there is one, otherwise every active admin.
      *
      * @return Collection<int, User>

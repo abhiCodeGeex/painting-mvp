@@ -18,7 +18,7 @@ class DashboardController extends PortalController
 
         $enquiries = $customer->enquiries()
             ->withCount(['lines', 'messages as unread_count' => fn (Builder $q) => $q->where('from_staff', true)->whereNull('read_at')->where('kind', '!=', 'system')])
-            ->with(['lines' => fn ($q) => $q->with(['artwork.media', 'media'])])
+            ->with(['lines' => fn ($q) => $q->with(['artwork.media', 'media']), 'orders'])
             ->latest('updated_at')
             ->get();
 

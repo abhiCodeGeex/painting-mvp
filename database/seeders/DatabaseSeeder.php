@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
             $this->call([
                 DemoCatalogSeeder::class,
                 MuseumArtworkSeeder::class,
+                ArtistFeeSeeder::class,
                 DemoEnquirySeeder::class,
                 DemoStockSeeder::class,
             ]);

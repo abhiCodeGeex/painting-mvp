@@ -2,13 +2,9 @@
     use App\Support\Money;
 
     /** @var array $b pricing engine result for this line */
-    /** @var int $labour labour per piece entered on the quote line (paise) */
-    /** @var ?int $quoted unit price currently on the quote line (paise) */
-    $labour = (int) ($labour ?? 0);
-    $engine = (int) ($b['unit_price'] ?? 0);
-    $cost = (int) ($b['unit_cost'] ?? 0);
-    $calculated = $engine + $labour;
-    $charged = ($quoted !== null && $quoted !== $calculated) ? $quoted : $calculated;
+    // What one piece costs us: the artwork plus materials at cost (no markup).
+    $costOf = fn (array $c): int => ($c['key'] ?? null) === 'artwork' ? (int) $c['sell'] : (int) $c['cost'];
+    $cost = array_sum(array_map($costOf, $b['components'] ?? []));
 
     // Whole rupees everywhere: the quote rounds to ₹1, and paise only add noise when reading.
     $inr = fn (int $paise): string => '₹'.number_format(round($paise / 100));
@@ -61,68 +57,31 @@
         default => (string) $c['label'],
     };
 
-    $markup = rtrim(rtrim(number_format((float) ($b['markup_percent'] ?? 0), 2), '0'), '.');
-    $profit = $charged - $cost;
-    $profitPct = $charged > 0 ? round($profit / $charged * 100) : 0;
 @endphp
 
 <style>
-    .pb { display: grid; gap: 1.25rem 2rem; grid-template-columns: minmax(0, 1fr); font-size: .875rem; line-height: 1.45; }
-    @container (min-width: 40rem) { .pb { grid-template-columns: minmax(0, 1fr) 15rem; } }
-    .pb-wrap { container-type: inline-size; }
-    .pb-eyebrow { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; opacity: .55; margin-bottom: .5rem; }
-    .pb-item { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-top: 1px solid rgba(127, 127, 127, .15); }
-    .pb-eyebrow + .pb-item { border-top: 0; padding-top: 0; }
+    .pb { font-size: .875rem; line-height: 1.45; }
+    .pb-item { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 0; border-top: 1px solid rgba(127, 127, 127, .15); }
+    .pb-item:first-child { border-top: 0; padding-top: 0; }
     .pb-how { opacity: .6; font-size: .78rem; margin-top: .1rem; }
     .pb-amt { white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .pb-card { align-self: start; border-radius: .75rem; padding: 1rem; background: rgba(127, 127, 127, .07); display: grid; gap: .4rem; }
-    .pb-line { display: flex; justify-content: space-between; gap: .75rem; }
-    .pb-total { font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
-    .pb-sep { border-top: 1px solid rgba(127, 127, 127, .2); margin: .35rem 0; }
-    .pb-note { opacity: .6; font-size: .75rem; }
-    .pb-pending { grid-column: 1 / -1; padding: .5rem .75rem; border-radius: .5rem; background: rgba(245, 158, 11, .14); }
+    .pb-total { font-weight: 600; border-top: 1px solid rgba(127, 127, 127, .35); }
+    .pb-pending { padding: .5rem .75rem; margin-bottom: .75rem; border-radius: .5rem; background: rgba(245, 158, 11, .14); }
 </style>
 
-<div class="pb-wrap">
-    <div class="pb">
-        @if (! empty($b['pending']))
-            <div class="pb-pending"><strong>Not finished:</strong> {{ implode(' · ', $b['pending']) }}</div>
-        @endif
+<div class="pb">
+    @if (! empty($b['pending']))
+        <div class="pb-pending"><strong>Not finished:</strong> {{ implode(' · ', $b['pending']) }}</div>
+    @endif
 
-        {{-- What one piece is made of. --}}
-        <div>
-            <div class="pb-eyebrow">What goes into one piece</div>
-            @foreach ($b['components'] ?? [] as $c)
-                <div class="pb-item">
-                    <div>
-                        <div>{{ $name($c) }}</div>
-                        <div class="pb-how">{{ $how($c) }}</div>
-                    </div>
-                    <div class="pb-amt">{{ $inr((int) $c['sell']) }}</div>
-                </div>
-            @endforeach
-        </div>
-
-        {{-- The price, and what we keep. --}}
-        <div class="pb-card">
-            <div class="pb-eyebrow" style="margin-bottom:0">Price per piece</div>
-            <div class="pb-total">{{ $inr($charged) }}</div>
-            @if ($charged !== $calculated)
-                <div class="pb-note">Typed by hand · calculated {{ $inr($calculated) }}</div>
-            @endif
-
-            <div class="pb-sep"></div>
-            <div class="pb-line"><span>Artwork &amp; materials</span><span class="pb-amt">{{ $inr($engine) }}</span></div>
-            <div class="pb-line"><span>Labour</span><span class="pb-amt">{{ $labour > 0 ? '+ '.$inr($labour) : '—' }}</span></div>
-
-            <div class="pb-sep"></div>
-            <div class="pb-line"><span>Our cost</span><span class="pb-amt">{{ $inr($cost) }}</span></div>
-            <div class="pb-line" style="font-weight:600;color:{{ $profit < 0 ? '#dc2626' : 'inherit' }}">
-                <span>Profit</span><span class="pb-amt">{{ $inr($profit) }} · {{ $profitPct }}%</span>
+    @foreach ($b['components'] ?? [] as $c)
+        <div class="pb-item">
+            <div>
+                <div>{{ $name($c) }}</div>
+                <div class="pb-how">{{ $how($c) }}</div>
             </div>
-            @if ((float) $markup > 0)
-                <div class="pb-note" style="margin-top:.25rem">Material rates shown are our cost; amounts include our {{ $markup }}% margin.</div>
-            @endif
+            <div class="pb-amt">{{ $inr($costOf($c)) }}</div>
         </div>
-    </div>
+    @endforeach
+    <div class="pb-item pb-total"><span>Cost per piece</span><span class="pb-amt">{{ $inr($cost) }}</span></div>
 </div>

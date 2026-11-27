@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Enums\Rounding;
 use App\Filament\Support\MasterForm;
+use App\Filament\Support\MoneyInput;
 use App\Providers\Filament\AdminPanelProvider;
 use App\Settings\PricingSettings;
 use BackedEnum;
@@ -87,6 +88,14 @@ class ManagePricingRules extends SettingsPage
                         ->helperText('How far the mat covers the artwork edge.'),
                     MasterForm::mm('rebate_allowance_mm', 'Frame rebate allowance per side')->required()
                         ->helperText('Clearance so the artwork fits the frame.'),
+                ]),
+
+            Section::make('Orders')
+                ->description('An order is paid in two parts: a token amount when it is placed, the rest (full & final) on delivery. The customer chooses the token; it can never be less than this minimum.')
+                ->columns(3)
+                ->schema([
+                    MoneyInput::make('order_token_amount')->label('Minimum token amount')->required()
+                        ->helperText('On an order smaller than this, the whole total is the token.'),
                 ]),
         ]);
     }

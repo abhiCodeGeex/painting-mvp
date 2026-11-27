@@ -5,6 +5,7 @@ use App\Http\Controllers\Portal\EnquiryController;
 use App\Http\Controllers\Portal\EnquiryLineController;
 use App\Http\Controllers\Portal\EnquiryMessageController;
 use App\Http\Controllers\Portal\EstimateController;
+use App\Http\Controllers\Portal\OrderController;
 use App\Http\Controllers\Portal\QuoteController;
 use App\Http\Controllers\PrivateMediaController;
 use App\Http\Controllers\Settings\AddressController;
@@ -44,6 +45,8 @@ Route::middleware(['auth', 'verified', 'customer'])->group(function () {
         Route::post('enquiries/{enquiry}/quotes/{quote}/changes', [QuoteController::class, 'requestChanges'])->name('enquiries.quotes.changes');
         Route::post('enquiries/{enquiry}/quotes/{quote}/reject', [QuoteController::class, 'reject'])->name('enquiries.quotes.reject');
         Route::post('enquiries/{enquiry}/quotes/{quote}/requote', [QuoteController::class, 'requote'])->name('enquiries.quotes.requote');
+        Route::post('enquiries/{enquiry}/quotes/{quote}/order', [OrderController::class, 'store'])->name('enquiries.quotes.order');
+        Route::post('enquiries/{enquiry}/payments/{payment}', [OrderController::class, 'pay'])->name('enquiries.payments.pay');
 
         // Lines use POST for updates too: they carry file uploads (multipart).
         Route::post('enquiries/{enquiry}/lines', [EnquiryLineController::class, 'store'])->name('enquiries.lines.store');

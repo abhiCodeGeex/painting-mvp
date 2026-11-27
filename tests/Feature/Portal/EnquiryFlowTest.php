@@ -2,8 +2,10 @@
 
 use App\Domain\Customers\CustomerAccounts;
 use App\Domain\Enquiries\EnquiryWorkflow;
+use App\Domain\Quotes\QuoteBuilder;
 use App\Enums\EnquiryStatus;
 use App\Enums\Role;
+use App\Http\Presenters\EnquiryPresenter;
 use App\Models\Artwork;
 use App\Models\Customer;
 use App\Models\Frame;
@@ -204,6 +206,35 @@ test('own-artwork photos are private to the owner and staff', function () {
     $this->actingAs($owner->user)->get($url)->assertOk();
     $this->actingAs($other->user)->get($url)->assertForbidden();
     $this->actingAs($this->admin)->get($url)->assertOk();
+});
+
+test('own artwork lines are named for what we do with them, and framing only claims no print medium', function () {
+    $customer = makeCustomer();
+    $enquiry = $customer->enquiries()->create(['project_name' => 'Mine']);
+    $own = fn (string $service, ?string $title = null) => [
+        ...catalogLine(),
+        'source_type' => 'own_artwork',
+        'artwork_id' => null,
+        'title' => $title,
+        'own' => ['service' => $service],
+        'artwork_photo' => UploadedFile::fake()->image('mine.jpg', 600, 800),
+        'rights_confirmed' => true,
+    ];
+    $this->actingAs($customer->user);
+    foreach ([$own('frame_only'), $own('reproduce_and_frame'), $own('frame_only', 'Grandma\'s sketch')] as $line) {
+        $this->post(route('portal.enquiries.lines.store', $enquiry), $line)->assertSessionHasNoErrors();
+    }
+    [$frameOnly, $reproduce, $titled] = $enquiry->lines()->orderBy('id')
+        ->with(['artwork.artist', 'qualityTier', 'medium', 'substrate', 'frame', 'mat', 'glazing', 'finishings', 'media'])->get()->all();
+    $medium = 'Giclée print';
+
+    expect(EnquiryPresenter::line($frameOnly)['display_title'])->toBe('Your artwork (to frame)')
+        ->and(EnquiryPresenter::line($frameOnly)['labels']['medium'])->toBeNull()
+        ->and(EnquiryPresenter::line($reproduce)['display_title'])->toBe('Your artwork (to reproduce & frame)')
+        ->and(EnquiryPresenter::line($reproduce)['labels']['medium'])->toBe($medium)
+        ->and(EnquiryPresenter::line($titled)['display_title'])->toBe('Grandma\'s sketch')
+        ->and(app(QuoteBuilder::class)->specText($frameOnly))->not->toContain($medium)
+        ->and(app(QuoteBuilder::class)->specText($reproduce))->toContain($medium);
 });
 
 test('customers cannot see or change other customers\' enquiries', function () {

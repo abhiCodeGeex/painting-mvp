@@ -11,6 +11,7 @@ use App\Enums\EnquiryStatus;
 use App\Enums\ExtraChargeBasis;
 use App\Enums\ExtraChargeType;
 use App\Enums\MessageKind;
+use App\Enums\OrderStatus;
 use App\Enums\QuoteStatus;
 use App\Models\Enquiry;
 use App\Models\EnquiryLine;
@@ -89,31 +90,51 @@ class QuoteBuilder
     }
 
     /**
-     * Pricing engine figures for one enquiry line, with the artist chosen for a new creation and the
-     * labour and the work after the artwork entered on the quote.
-     * Calculated unit price = engine price + labour + work, all per piece (no markup).
+     * Pricing engine figures for one enquiry line, with the artist chosen for a new creation.
+     * Price per piece = cost (artwork + materials at cost) + labour + the margin staff type.
+     * The margin starts empty on a new quote: staff decide it for every artwork.
      *
      * @return array<string, mixed>
      */
-    public function linePrice(EnquiryLine $line, Enquiry $enquiry, ?int $artistId = null, int $labourAmount = 0, int $workTotal = 0): array
+    public function linePrice(EnquiryLine $line, Enquiry $enquiry, ?int $artistId = null, int $labourAmount = 0, ?int $marginAmount = null): array
     {
         $r = $this->engine->price(LineConfig::fromLine($line, $artistId), $enquiry->required_by);
-        $calculated = $r['unit_price'] + max(0, $labourAmount) + max(0, $workTotal);
+        $cost = self::costOf($r);
+        $labour = max(0, $labourAmount);
+        $margin = $marginAmount === null ? null : max(0, $marginAmount);
+        $price = $cost + $labour + (int) $margin;
 
         return [
             'quantity' => $r['quantity'],
-            'unit_cost' => $r['unit_cost'],
-            'calculated_unit_price' => $calculated,
-            'unit_price' => $calculated,
+            'unit_cost' => $cost,
+            'calculated_unit_price' => $price,
+            'unit_price' => $price,
             'artist_id' => $artistId,
-            'labour_amount' => max(0, $labourAmount),
+            'labour_amount' => $labour,
+            'margin_amount' => $margin,
             'breakdown' => $r,
         ];
+    }
+
+    /**
+     * What one piece costs us: the artwork (artist fee or catalogue price) plus materials at cost.
+     *
+     * @param  array<string, mixed>  $breakdown  pricing engine result
+     */
+    public static function costOf(array $breakdown): int
+    {
+        return (int) collect($breakdown['components'] ?? [])
+            ->sum(fn ($c) => ($c['key'] ?? null) === 'artwork' ? (int) ($c['sell'] ?? 0) : (int) ($c['cost'] ?? 0));
     }
 
     /** Copies the latest quote into a new draft with the next version number. */
     public function newVersion(Quote $from, User $by): Quote
     {
+        // An ordered enquiry is settled: a revised quotation would leave the order on an old version.
+        if ($from->enquiry->orders()->where('status', '!=', OrderStatus::Cancelled)->exists()) {
+            throw ValidationException::withMessages(['status' => 'This enquiry has an order. Cancel the order before revising the quotation.']);
+        }
+
         return DB::transaction(function () use ($from, $by): Quote {
             $copy = $from->replicate(['status', 'issue_date', 'valid_until', 'sent_at', 'sent_via', 'viewed_at']);
             $copy->version = (int) $from->enquiry->quotes()->withTrashed()->max('version') + 1;
@@ -122,7 +143,9 @@ class QuoteBuilder
             $copy->save();
 
             foreach ($from->lines as $line) {
-                $copy->lines()->save($line->replicate());
+                // Work after the artwork is no longer part of a quote (labour per piece covers it) and
+                // re-pricing ignores it, so an old line's list must not travel on into the new version.
+                $copy->lines()->save($line->replicate()->forceFill(['work_items' => null]));
             }
             foreach ($from->extras as $extra) {
                 $copy->extras()->save($extra->replicate());
@@ -149,7 +172,8 @@ class QuoteBuilder
             $line->saveQuietly();
             if ($line->counts()) {
                 $items += $line->line_total;
-                $cost += $line->unit_cost * $line->quantity;
+                // Our cost: artwork, materials and labour (labour is paid out, so it is not profit).
+                $cost += ((int) $line->unit_cost + (int) $line->labour_amount) * $line->quantity;
             }
         }
 
@@ -267,9 +291,9 @@ class QuoteBuilder
     }
 
     /**
-     * Lines the customer would see with no price, or with a price the engine could not finish (e.g. a
-     * new creation with no artist yet). A price staff typed themselves counts as finished: they may
-     * knowingly quote a figure while a detail such as the frame is still to be advised.
+     * Lines not ready to send: the price could not be worked out (e.g. a new creation with no artist
+     * yet), no margin was entered, or there is no price at all.
+     * Optional lines are checked too, ticked or not: the customer can tick one when approving.
      *
      * @return list<string> one plain-language message per unfinished line
      */
@@ -277,18 +301,15 @@ class QuoteBuilder
     {
         $problems = [];
         foreach ($quote->lines()->orderBy('position')->get() as $line) {
-            if (! $line->counts()) {
-                continue;
-            }
             $label = 'Line '.$line->position.($line->title ? ' “'.$line->title.'”' : '');
             $pending = array_values(array_filter((array) ($line->breakdown['pending'] ?? [])));
-            $typedOwnPrice = (int) $line->unit_price !== (int) $line->calculated_unit_price;
 
-            if ($pending !== [] && ! $typedOwnPrice) {
-                $todo = lcfirst(implode(', ', $pending));
-                $problems[] = "{$label} is not finished: {$todo} (or type the price yourself).";
+            if ($pending !== []) {
+                $problems[] = "{$label} is not finished: ".lcfirst(implode(', ', $pending)).'.';
+            } elseif ($line->margin_amount === null) {
+                $problems[] = "{$label} has no margin yet. Enter your margin before sending.";
             } elseif ((int) $line->unit_price <= 0) {
-                $problems[] = "{$label} has no price yet. Type a unit price before sending.";
+                $problems[] = "{$label} has no price yet.";
             }
         }
 
@@ -357,7 +378,8 @@ class QuoteBuilder
             $line->source_type->getLabel(),
             $line->printSizeLabel().($line->size_reference->value === 'outer' ? ' (outer)' : ''),
             $line->rotationLabel(),
-            $line->medium?->name,
+            // Framing the customer's own piece prints nothing: no print medium on the quote.
+            $line->isFrameOnly() ? null : $line->medium?->name,
             $line->substrate?->name,
             // e.g. "Frame: Blue ribbed 20 mm + Gold 30 mm around · Frame 1 split: top half / bottom half Walnut"
             $line->frame ? 'Frame: '.$line->frameLayersLabel() : ($line->frame_advice_requested ? 'Frame: to be advised' : 'No frame'),

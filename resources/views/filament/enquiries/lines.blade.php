@@ -48,7 +48,8 @@
                 {!! $row('Hanging', $line->rotationLabel()) !!}
                 {!! $row('Quantity', (string) $line->quantity) !!}
                 {!! $row('Quality', $line->qualityTier?->name) !!}
-                {!! $row('Medium', $line->medium?->name) !!}
+                {{-- Framing the customer's own piece prints nothing, so no print medium is shown. --}}
+                {!! $row('Medium', $line->isFrameOnly() ? null : $line->medium?->name) !!}
                 {!! $row('Substrate', $line->substrate?->name) !!}
                 {!! $row('Edges', $line->edge_style?->getLabel()) !!}
                 @php

@@ -283,8 +283,6 @@ export class WallPreview {
     readonly frame = input<PreviewFrame | null>(null);
     /** Stacked / split frames, innermost first (optional; layers[0] is `frame`). */
     readonly layers = input<PreviewLayer[] | null>(null);
-    /** Rebate gap (mm, each side) inside a frame: part of the finished size, as priced. */
-    readonly rebateMm = input(0);
     readonly mat = input<PreviewMat | null>(null);
     readonly depthMm = input(0);
     readonly edgeStyle = input<string | null>(null);
@@ -350,7 +348,7 @@ export class WallPreview {
     ],
         { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
     );
-    private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat(), this.layers(), this.rebateMm()));
+    private outer = computed(() => outerSize(this.w(), this.h(), this.frame(), this.mat(), this.layers()));
     protected finishedLabel = computed(() => sizeLabel(this.outer().width, this.outer().height, this.unit()));
 
     /** The customer's wall (when they typed its width): drawn as a dashed outline with the piece on it. */

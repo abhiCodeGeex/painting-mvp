@@ -141,7 +141,9 @@ test('admin creates a quote prefilled by the pricing engine with IGST across sta
 
     expect($quote->number)->toBe('Q-'.now()->year.'-0001')
         ->and($quote->status)->toBe(QuoteStatus::Draft)
-        ->and($line->unit_price)->toBe($line->calculated_unit_price)->toBeGreaterThan(0)
+        ->and($line->margin_amount)->toBeNull()                       // staff enter the margin themselves
+        ->and($line->unit_cost)->toBe(QuoteBuilder::costOf($line->breakdown))->toBeGreaterThan(0)
+        ->and($line->unit_price)->toBe($line->unit_cost)
         ->and($line->line_total)->toBe($line->unit_price * 2)
         ->and($quote->extras->pluck('name'))->toContain('Installation')
         ->and($quote->intra_state)->toBeFalse()
@@ -162,22 +164,23 @@ test('within the company state GST is split into CGST and SGST', function () {
         ->and($quote->tax_total)->toBe((int) round($quote->taxable * 0.18));
 });
 
-test('price overrides, discounts and optional lines change the totals', function () {
+test('discounts and optional lines change the totals', function () {
     $builder = app(QuoteBuilder::class);
     $quote = $builder->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
     $quote->extras()->update(['inclusion' => 'included']);
     $line = $quote->lines->first();
 
-    $line->update(['unit_price' => 1_000_000, 'discount_amount' => 100_000, 'override_reason' => 'Loyal customer']);
+    $line->update(['unit_price' => 1_000_000]);
     $quote->update(['discount_percent' => 10]);
     $builder->recalculate($quote);
 
-    expect($line->fresh()->line_total)->toBe(1_900_000)
-        ->and($line->fresh()->isOverridden())->toBeTrue()
-        ->and($quote->items_total)->toBe(1_900_000)
+    expect($line->fresh()->line_total)->toBe(2_000_000)
+        ->and($quote->items_total)->toBe(2_000_000)
         ->and($quote->extras_total)->toBe(0)
-        ->and($quote->discount_amount)->toBe(190_000)
-        ->and($quote->taxable)->toBe(1_710_000);
+        ->and($quote->discount_amount)->toBe(200_000)
+        ->and($quote->taxable)->toBe(1_800_000)
+        // Our cost: artwork, materials and labour for both pieces.
+        ->and($quote->total_cost)->toBe(($line->unit_cost + $line->labour_amount) * 2);
 
     $line->update(['is_optional' => true, 'is_selected' => false]);
     $builder->recalculate($quote);
@@ -187,7 +190,7 @@ test('price overrides, discounts and optional lines change the totals', function
 test('sending a quote by email, WhatsApp and portal message', function () {
     $enquiry = submittedEnquiry($this->customer);
     $builder = app(QuoteBuilder::class);
-    $quote = $builder->createFromEnquiry($enquiry, $this->admin);
+    $quote = withMargin($builder->createFromEnquiry($enquiry, $this->admin));
 
     $result = $builder->send($quote, $this->admin, ['email', 'whatsapp', 'portal']);
     $quote->refresh();
@@ -215,7 +218,7 @@ test('sending a quote by email, WhatsApp and portal message', function () {
 test('the customer sees the quote and opens the PDF', function () {
     $enquiry = submittedEnquiry($this->customer);
     $builder = app(QuoteBuilder::class);
-    $quote = $builder->createFromEnquiry($enquiry, $this->admin);
+    $quote = withMargin($builder->createFromEnquiry($enquiry, $this->admin));
 
     // Drafts are invisible to the customer.
     $this->actingAs($this->customer->user)->get(route('portal.enquiries.quotes.pdf', [$enquiry, $quote]))->assertNotFound();
@@ -233,7 +236,7 @@ test('the customer sees the quote and opens the PDF', function () {
 test('a new version supersedes the previous one when sent', function () {
     $enquiry = submittedEnquiry($this->customer);
     $builder = app(QuoteBuilder::class);
-    $v1 = $builder->createFromEnquiry($enquiry, $this->admin);
+    $v1 = withMargin($builder->createFromEnquiry($enquiry, $this->admin));
     $builder->send($v1, $this->admin, ['portal']);
 
     $v2 = $builder->createFromEnquiry($enquiry->fresh(), $this->admin);
@@ -254,12 +257,18 @@ test('admin screens: create quote from the enquiry, edit, preview and send', fun
 
     Livewire::test(ListQuotes::class)->assertOk()->assertCanSeeTableRecords([$quote]);
 
-    Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
+    $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
         ->assertOk()
-        ->fillForm(['discount_percent' => 5, 'lead_time' => '2 weeks'])
+        ->assertSee('Required before sending');
+    $key = array_key_first($page->get('data.lines'));
+    $page->fillForm(['discount_percent' => 5, 'lead_time' => '2 weeks'])
+        ->set("data.lines.{$key}.margin_amount", '1500')
         ->call('save')
         ->assertHasNoFormErrors();
-    expect($quote->fresh()->lead_time)->toBe('2 weeks')->and((int) $quote->fresh()->discount_amount)->toBeGreaterThan(0);
+    $line = $quote->lines()->firstOrFail();
+    expect($quote->fresh()->lead_time)->toBe('2 weeks')->and((int) $quote->fresh()->discount_amount)->toBeGreaterThan(0)
+        ->and($line->margin_amount)->toBe(150_000)
+        ->and($line->unit_price)->toBe($line->unit_cost + $line->labour_amount + 150_000);
 
     $this->get(route('admin.quotes.pdf', $quote))->assertOk()->assertHeader('Content-Type', 'application/pdf');
 
@@ -294,22 +303,24 @@ test('each quote line keeps a breakdown of how its price was worked out, shown o
         ->and($rows['frame']['measure'])->toContain('perimeter')->toContain('waste')
         ->and($rows['frame']['rate'])->toContain('/m (')
         ->and($rows['substrate']['measure'])->toBe('60 × 40 cm = 0.24 m²')
-        ->and($line->breakdown['unit_price'])->toBe($line->calculated_unit_price)
-        ->and($line->breakdown['unit_cost'])->toBe($line->unit_cost);
+        // Cost = the artwork plus materials at cost (no markup).
+        ->and($line->unit_cost)->toBe($rows['artwork']['sell'] + $rows->except('artwork')->sum('cost'));
 
     $this->actingAs($this->admin);
     Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
         ->assertOk()
-        ->assertSee('Price breakdown')
+        ->assertSee('Cost breakdown')
         // In plain words: how much moulding, at what rate per metre.
         ->assertSee('(incl. corners and 10% extra for cutting)')
-        ->assertSee('Artwork & materials')
+        ->assertSee('Cost per piece')
         ->assertSee('Profit')
         ->assertDontSee('Framing work')
         ->assertDontSee('Work after the artwork')
-        ->assertSee('Price per piece')
+        ->assertSee('Your margin')
         ->assertSee('What the customer asked for')
-        ->assertSee('Labour (per piece)');
+        // Removed from the page: per-line discount and the optional switch.
+        ->assertDontSee('Line discount')
+        ->assertDontSee('The customer may leave it out.');
 });
 
 test('a new creation is pending until the admin chooses an artist, then priced by their fee', function () {
@@ -342,7 +353,7 @@ test('choosing the artist on the quote page re-prices the line straight away', f
     $quote = app(QuoteBuilder::class)->createFromEnquiry($enquiry->fresh(), $this->admin);
     $line = $quote->lines()->firstOrFail();
     $luca = Artist::where('name', 'Luca Bianchi')->firstOrFail();
-    $expected = app(QuoteBuilder::class)->linePrice($line->enquiryLine, $enquiry, $luca->id)['calculated_unit_price'];
+    $expected = app(QuoteBuilder::class)->linePrice($line->enquiryLine, $enquiry, $luca->id)['unit_cost'];
 
     $this->actingAs($this->admin);
     $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
@@ -351,47 +362,44 @@ test('choosing the artist on the quote page re-prices the line straight away', f
     $key = array_key_first($page->get('data.lines'));
 
     $page->set("data.lines.{$key}.artist_id", $luca->id)
-        ->assertSet("data.lines.{$key}.calculated_unit_price", $expected)
-        ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($expected))
+        ->assertSet("data.lines.{$key}.unit_cost", Money::toRupees($expected))
         ->assertSee('New artwork by Luca Bianchi')
+        ->set("data.lines.{$key}.margin_amount", '2000')
         ->call('save')
         ->assertHasNoFormErrors();
 
     expect($line->fresh())->artist_id->toBe($luca->id)
-        ->unit_price->toBe($expected)
-        ->line_total->toBe($expected * 2);
+        ->unit_cost->toBe($expected)
+        ->unit_price->toBe($expected + 200_000)
+        ->line_total->toBe(($expected + 200_000) * 2);
 });
 
-test('labour entered on a quote line is added to the unit price and the line total', function () {
+test('price per piece = cost + labour + the margin staff type, live on the page and saved', function () {
     $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
     $line = $quote->lines()->firstOrFail();
-    $engine = $line->calculated_unit_price;
+    $cost = $line->unit_cost;
+    $price = $cost + 75_000 + 400_000;
 
     $this->actingAs($this->admin);
     $page = Livewire::test(EditQuote::class, ['record' => $quote->getKey()]);
     $key = array_key_first($page->get('data.lines'));
 
     $page->set("data.lines.{$key}.labour_amount", '750')
-        ->assertSet("data.lines.{$key}.calculated_unit_price", $engine + 75_000)
-        ->assertSet("data.lines.{$key}.unit_price", Money::toRupees($engine + 75_000))
-        ->assertSee('+ ₹750') // labour in the price breakdown
-        ->assertSee(Money::format(($engine + 75_000) * 2)) // live totals
+        ->set("data.lines.{$key}.margin_amount", '4000')
+        ->assertSee(Money::format($price))           // price per piece
+        ->assertSee(Money::format($price * 2))       // live artworks total
+        ->assertSee(Money::format(($cost + 75_000) * 2)) // our cost: labour is paid out, not profit
         ->call('save')
         ->assertHasNoFormErrors();
 
     $line->refresh();
     expect($line->labour_amount)->toBe(75_000)
-        ->and($line->unit_price)->toBe($engine + 75_000)
-        ->and($line->calculated_unit_price)->toBe($engine + 75_000)
-        ->and($line->isOverridden())->toBeFalse()
-        ->and($line->line_total)->toBe(($engine + 75_000) * 2)
-        ->and($quote->fresh()->items_total)->toBe(($engine + 75_000) * 2);
-
-    // A hand-typed price different from calculated + labour needs a reason.
-    Livewire::test(EditQuote::class, ['record' => $quote->getKey()])
-        ->set("data.lines.{$key}.unit_price", Money::toRupees($engine + 1_000))
-        ->call('save')
-        ->assertHasFormErrors(["lines.{$key}.override_reason" => 'required']);
+        ->and($line->margin_amount)->toBe(400_000)
+        ->and($line->unit_cost)->toBe($cost)
+        ->and($line->unit_price)->toBe($price)
+        ->and($line->line_total)->toBe($price * 2)
+        ->and($quote->fresh()->items_total)->toBe($price * 2)
+        ->and($quote->fresh()->total_cost)->toBe(($cost + 75_000) * 2);
 });
 
 test('quote lines have no separate work section: labour per piece covers it, and Work charges is off the menu', function () {
@@ -402,12 +410,12 @@ test('quote lines have no separate work section: labour per piece covers it, and
         ->assertOk()
         ->assertDontSee('Work after the artwork')
         ->assertDontSee('Add work (cutting, mounting, installation…)')
-        ->assertSee('Labour (per piece)');
+        ->assertSee('Labour');
 
     expect(WorkChargeResource::shouldRegisterNavigation())->toBeFalse();
 });
 
-test('a quote with an unfinished line cannot be sent until staff finish it or type their own price', function () {
+test('a quote cannot be sent until every line is finished and has a margin', function () {
     $enquiry = submittedEnquiry($this->customer);
     $enquiry->lines()->firstOrFail()->update(['source_type' => 'custom_creation', 'artwork_id' => null]);
     $builder = app(QuoteBuilder::class);
@@ -415,7 +423,7 @@ test('a quote with an unfinished line cannot be sent until staff finish it or ty
     $line = $quote->lines()->firstOrFail();
     expect($line->breakdown['pending'])->toContain('Choose an artist');
 
-    $message = "Line 1 “{$line->title}” is not finished: choose an artist (or type the price yourself).";
+    $message = "Line 1 “{$line->title}” is not finished: choose an artist.";
     try {
         $builder->send($quote, $this->admin, ['portal']);
         $this->fail('The quote should not have been sent.');
@@ -430,36 +438,70 @@ test('a quote with an unfinished line cannot be sent until staff finish it or ty
         ->assertNotified('The quote was not sent');
     expect($quote->fresh()->status)->toBe(QuoteStatus::Draft);
 
-    // A price typed by staff is their decision: the quote can go.
-    $line->update(['unit_price' => $line->calculated_unit_price + 500_000]);
-    $builder->send($quote->fresh(), $this->admin, ['portal']);
+    // Artist chosen, but no margin yet.
+    $asha = Artist::where('name', 'Asha Menon')->firstOrFail();
+    $line->update(app(QuoteBuilder::class)->linePrice($line->enquiryLine, $quote->enquiry, $asha->id));
+    expect($builder->unfinishedLines($quote))->toBe(["Line 1 “{$line->title}” has no margin yet. Enter your margin before sending."]);
+
+    // With a margin the quote can go.
+    $builder->send(withMargin($quote), $this->admin, ['portal']);
     expect($quote->fresh()->status)->toBe(QuoteStatus::Sent);
 });
 
-test('a counted line with no price blocks sending, an unselected optional one does not', function () {
+test('a line with no price blocks sending, optional or not, ticked or not', function () {
     $builder = app(QuoteBuilder::class);
     $quote = $builder->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
     $line = $quote->lines()->firstOrFail();
-    $line->update(['unit_price' => 0]);
+    $line->update(['unit_price' => 0, 'margin_amount' => 0]);
+    $message = "Line 1 “{$line->title}” has no price yet.";
 
-    expect($builder->unfinishedLines($quote))->toBe(["Line 1 “{$line->title}” has no price yet. Type a unit price before sending."]);
+    expect($builder->unfinishedLines($quote))->toBe([$message]);
 
+    // The customer can still tick an optional line when approving, so it must be priced too.
     $line->update(['is_optional' => true, 'is_selected' => false]);
-    expect($builder->unfinishedLines($quote))->toBe([]);
+    expect($builder->unfinishedLines($quote))->toBe([$message]);
 });
 
-test('the quote PDF lists the work after the artwork and labour included in a line\'s price', function () {
+test('an unticked optional line still waiting for an artist blocks sending', function () {
+    $enquiry = submittedEnquiry($this->customer);
+    $enquiry->lines()->firstOrFail()->update(['source_type' => 'custom_creation', 'artwork_id' => null]);
+    $builder = app(QuoteBuilder::class);
+    $quote = $builder->createFromEnquiry($enquiry->fresh(), $this->admin);
+    $line = $quote->lines()->firstOrFail();
+    $line->update(['is_optional' => true, 'is_selected' => false]);
+
+    expect($builder->unfinishedLines($quote))
+        ->toBe(["Line 1 “{$line->title}” is not finished: choose an artist."]);
+});
+
+test('the quote PDF lists the labour included in a line\'s price, not old work after the artwork', function () {
     $quote = app(QuoteBuilder::class)->createFromEnquiry(submittedEnquiry($this->customer), $this->admin);
     $quote->lines()->firstOrFail()->update([
         'labour_amount' => 20_000,
+        // An old line may still carry work items; they are no longer priced.
         'work_items' => [
             ['work_charge_id' => null, 'name' => 'Installation', 'amount' => 300_000],
-            ['work_charge_id' => null, 'name' => 'Cutting & trimming', 'amount' => 50_000],
         ],
     ]);
     $quote->load('lines', 'extras', 'enquiry.customer', 'preparer');
 
     $html = view('pdf.quote', ['quote' => $quote, 'company' => app(CompanySettings::class)])->render();
 
-    expect($html)->toContain('Includes: Installation ₹3,000.00 · Cutting &amp; trimming ₹500.00 · Labour ₹200.00 per piece');
+    expect($html)->toContain('Includes: Labour ₹200.00 per piece')
+        ->not->toContain('Installation ₹3,000.00');
+});
+
+test('a new version and a re-priced line drop old work after the artwork', function () {
+    $builder = app(QuoteBuilder::class);
+    $v1 = withMargin($builder->createFromEnquiry(submittedEnquiry($this->customer), $this->admin));
+    $v1->lines()->firstOrFail()->update(['work_items' => [['work_charge_id' => null, 'name' => 'Installation', 'amount' => 300_000]]]);
+    $builder->send($v1->fresh(), $this->admin, ['portal']);
+
+    $v2 = $builder->createFromEnquiry($v1->enquiry->fresh(), $this->admin);
+    expect($v2->lines()->firstOrFail()->work_items)->toBeNull()
+        ->and($v1->lines()->firstOrFail()->work_items)->not->toBeNull(); // the sent quote is left as it was
+
+    $line = $v1->lines()->firstOrFail();
+    $line->update(['calculated_unit_price' => $line->calculated_unit_price + 100]);
+    expect($line->fresh()->work_items)->toBeNull();
 });

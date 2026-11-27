@@ -5,6 +5,7 @@ use App\Domain\Pricing\FrameLayers;
 use App\Domain\Pricing\LineConfig;
 use App\Domain\Pricing\PricingEngine;
 use App\Domain\Quotes\QuoteBuilder;
+use App\Http\Presenters\CatalogOptions;
 use App\Models\Artwork;
 use App\Models\EnquiryLine;
 use App\Models\Frame;
@@ -15,6 +16,7 @@ use App\Support\FramedPreview;
 use Database\Seeders\DemoCatalogSeeder;
 use Database\Seeders\MasterDataSeeder;
 use Database\Seeders\StateSeeder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 
@@ -56,7 +58,7 @@ function multiFrameLine(array $overrides = []): LineConfig
     ]);
 }
 
-function multiFrameRows(array $priced): Illuminate\Support\Collection
+function multiFrameRows(array $priced): Collection
 {
     return collect($priced['components'])->keyBy('key');
 }
@@ -274,6 +276,40 @@ describe('portal', function () {
             ->assertSessionHasErrors(['artwork_id', 'frame_layers.1.frame_id']);
     });
 
+    it('gives the editor the deactivated frames and artwork that the enquiry lines still use', function () use ($payload) {
+        $split = Frame::create([
+            'code' => 'MF-C', 'name' => 'Walnut', 'profile_width_mm' => 20, 'profile_depth_mm' => 25, 'colour_hex' => '#5A3A22',
+            'finish' => 'matte', 'material' => 'wood', 'price_per_m' => 60_000, 'waste_percent' => 0,
+        ]);
+        $layers = [['frame_id' => $this->frameA->id, 'split' => ['frame_id' => $split->id, 'mode' => 'halves']], ['frame_id' => $this->frameB->id, 'split' => null]];
+        $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload(['frame_layers' => json_encode($layers)]))
+            ->assertSessionHasNoErrors();
+        $artworkId = $this->enquiry->lines()->sole()->artwork_id;
+
+        $this->frameB->update(['is_active' => false]);
+        $split->update(['is_active' => false]);
+        Artwork::whereKey($artworkId)->update(['is_active' => false]);
+        $unused = Frame::create([
+            'code' => 'MF-D', 'name' => 'Unused', 'profile_width_mm' => 20, 'profile_depth_mm' => 25, 'colour_hex' => '#000000',
+            'finish' => 'matte', 'material' => 'wood', 'price_per_m' => 60_000, 'waste_percent' => 0, 'is_active' => false,
+        ]);
+
+        $options = CatalogOptions::forEditor($this->enquiry);
+        $frames = collect($options['frames'])->keyBy('id');
+        $artworks = collect($options['artworks'])->keyBy('id');
+        expect($frames[$this->frameA->id]['is_active'])->toBeTrue()
+            ->and($frames[$this->frameB->id])->toMatchArray(['name' => 'Gold', 'is_active' => false])
+            ->and($frames[$split->id])->toMatchArray(['name' => 'Walnut', 'is_active' => false])
+            ->and($frames->has($unused->id))->toBeFalse()
+            ->and($artworks[$artworkId]['is_active'])->toBeFalse();
+
+        // Without an enquiry only active ones are listed.
+        $plain = CatalogOptions::forEditor();
+        expect(collect($plain['frames'])->pluck('id'))->not->toContain($this->frameB->id)->not->toContain($split->id)
+            ->and(collect($plain['artworks'])->pluck('id'))->not->toContain($artworkId)
+            ->and(collect($plain['frames'])->pluck('is_active')->unique()->all())->toBe([true]);
+    });
+
     it('checks an outer size against the picture inside the frames', function () use ($payload) {
         // Frame A (20 mm) can hold at most a 600 mm opening. Outer 640 × 440 with frame A → picture 596 × 396 (2 mm rebate each side): fits.
         $this->frameA->update(['max_inner_width_mm' => 600, 'max_inner_height_mm' => 600]);
@@ -285,6 +321,23 @@ describe('portal', function () {
         $this->post(route('portal.enquiries.lines.store', $this->enquiry), $payload([
             'size_reference' => 'image', 'width_mm' => 640, 'height_mm' => 440, 'frame_id' => $this->frameA->id,
         ]))->assertSessionHasErrors('frame_id');
+    });
+
+    it('counts the rebate allowance in the opening a frame must hold, as pricing does', function () use ($payload) {
+        // Picture 598 × 398 + 2 mm rebate each side = 602 × 402: just too big for a 600 mm opening.
+        $this->frameA->update(['max_inner_width_mm' => 600, 'max_inner_height_mm' => 600]);
+        $url = route('portal.enquiries.lines.store', $this->enquiry);
+        $this->post($url, $payload(['width_mm' => 598, 'height_mm' => 398, 'frame_id' => $this->frameA->id]))
+            ->assertSessionHasErrors(['frame_id' => 'Blue ribbed is not available for this size.']);
+        $this->post($url, $payload(['width_mm' => 596, 'height_mm' => 396, 'frame_id' => $this->frameA->id]))
+            ->assertSessionHasNoErrors();
+
+        // The frame around starts from frame A's outside: 596 + 4 + 2 × 20 = 640 mm.
+        $this->frameB->update(['max_inner_width_mm' => 639, 'max_inner_height_mm' => 639]);
+        $this->post($url, $payload([
+            'width_mm' => 596, 'height_mm' => 396,
+            'frame_layers' => json_encode([['frame_id' => $this->frameA->id], ['frame_id' => $this->frameB->id]]),
+        ]))->assertSessionHasErrors(['frame_layers.1.frame_id' => 'Gold is not available for this size.']);
     });
 
     it('prices stacked frames in the live estimate', function () use ($payload) {

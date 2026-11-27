@@ -2,11 +2,16 @@
 
 namespace App\Filament\Resources\Sales\Quotes\Pages;
 
+use App\Domain\Orders\OrderService;
 use App\Domain\Quotes\QuoteBuilder;
+use App\Enums\OrderStatus;
 use App\Enums\PreferredContact;
 use App\Enums\QuoteStatus;
+use App\Filament\Resources\Sales\Orders\OrderResource;
 use App\Filament\Resources\Sales\Quotes\QuoteResource;
+use App\Filament\Support\MoneyInput;
 use App\Models\Quote;
+use App\Support\Money;
 use Filament\Actions\Action;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Textarea;
@@ -47,6 +52,35 @@ class EditQuote extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('placeOrder')
+                ->label('Place order')
+                ->icon('heroicon-o-shopping-bag')
+                ->color('success')
+                ->visible(fn () => $this->quote()->status === QuoteStatus::Approved && ! $this->quote()->order()->exists())
+                ->requiresConfirmation()
+                ->modalHeading('Place the order for the customer?')
+                ->modalDescription(fn () => 'Order total '.Money::format($this->quote()->grand_total)
+                    .'. The token amount is due now and the rest on delivery.')
+                ->fillForm(fn () => ['token_amount' => app(OrderService::class)->minimumToken((int) $this->quote()->grand_total)])
+                ->schema([
+                    MoneyInput::make('token_amount')->label('Token amount')->required()
+                        ->minValue(fn () => app(OrderService::class)->minimumToken((int) $this->quote()->grand_total) / 100)
+                        ->maxValue(fn () => $this->quote()->grand_total / 100)
+                        ->helperText(fn () => 'At least '.Money::format(app(OrderService::class)->minimumToken((int) $this->quote()->grand_total))
+                            .', at most the order total.'),
+                ])
+                ->action(function (array $data): void {
+                    $order = app(OrderService::class)->place($this->quote(), auth()->user(), (int) $data['token_amount']);
+                    $this->redirect(OrderResource::getUrl('view', ['record' => $order]));
+                }),
+
+            Action::make('openOrder')
+                ->label(fn () => 'Order '.$this->quote()->order?->number)
+                ->icon('heroicon-o-shopping-bag')
+                ->color('success')
+                ->visible(fn () => $this->quote()->order()->exists())
+                ->url(fn () => OrderResource::getUrl('view', ['record' => $this->quote()->order])),
+
             Action::make('pdf')
                 ->label(fn () => $this->quote()->status->isEditable() ? 'Preview PDF' : 'PDF')
                 ->icon('heroicon-o-document-arrow-down')
@@ -122,7 +156,8 @@ class EditQuote extends EditRecord
                 ->label('New version')
                 ->icon('heroicon-o-document-duplicate')
                 ->color('gray')
-                ->visible(fn () => ! $this->quote()->status->isEditable() && ! $this->quote()->enquiry->quotes()->where('status', QuoteStatus::Draft)->exists())
+                ->visible(fn () => ! $this->quote()->status->isEditable() && ! $this->quote()->enquiry->quotes()->where('status', QuoteStatus::Draft)->exists()
+                    && ! $this->quote()->enquiry->orders()->where('status', '!=', OrderStatus::Cancelled)->exists())
                 ->requiresConfirmation()
                 ->modalDescription('Copies this quote into a new draft. When you send it, this version is marked as superseded.')
                 ->action(function (): void {

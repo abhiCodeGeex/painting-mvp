@@ -2,12 +2,15 @@
 
 namespace App\Http\Presenters;
 
+use App\Domain\Orders\OrderService;
 use App\Enums\MessageKind;
 use App\Enums\QuoteStatus;
 use App\Models\Address;
 use App\Models\Enquiry;
 use App\Models\EnquiryLine;
 use App\Models\Message;
+use App\Models\Order;
+use App\Models\Payment;
 use App\Models\Quote;
 use App\Models\QuoteExtra;
 use App\Models\QuoteLine;
@@ -25,14 +28,17 @@ class EnquiryPresenter
      */
     public static function summary(Enquiry $enquiry): array
     {
+        // Once ordered, the order's progress is what the customer wants to see in their list.
+        $order = $enquiry->relationLoaded('orders') ? $enquiry->orders->first() : null;
+
         return [
             'id' => $enquiry->id,
             'reference' => $enquiry->reference,
             'display_reference' => $enquiry->displayReference(),
             'project_name' => $enquiry->project_name,
             'status' => $enquiry->status->value,
-            'status_label' => $enquiry->status->customerLabel(),
-            'status_color' => $enquiry->status->getColor(),
+            'status_label' => $order ? "Order {$order->number}: ".$order->status->customerLabel() : $enquiry->status->customerLabel(),
+            'status_color' => $order ? $order->status->getColor() : $enquiry->status->getColor(),
             'lines_count' => $enquiry->lines_count ?? $enquiry->lines()->count(),
             'unread_count' => (int) ($enquiry->unread_count ?? 0),
             'thumbnail' => $enquiry->relationLoaded('lines') ? $enquiry->lines->first()?->previewImageUrl() : null,
@@ -116,7 +122,9 @@ class EnquiryPresenter
             'notes' => $line->notes,
             'labels' => [
                 'quality' => $line->qualityTier?->name,
-                'medium' => $line->medium?->name,
+                // Framing the customer's own piece prints nothing, so no print medium is claimed even if
+                // one is still stored on the line. The surface stays: it is what their piece is on.
+                'medium' => $line->isFrameOnly() ? null : $line->medium?->name,
                 'substrate' => $line->substrate?->name,
                 'frame' => count($line->frameLayers()) > 1 || ($line->frameLayers()[0]['split'] ?? null) ? $line->frameLayersLabel() : $line->frame?->name,
                 'mat' => $line->mat?->name,
@@ -206,6 +214,48 @@ class EnquiryPresenter
                 || ($quote->isPastValidity() && in_array($quote->status, [QuoteStatus::Sent, QuoteStatus::Viewed], true)),
             'responded_at' => $quote->responded_at?->toIso8601String(),
             'response' => $quote->response ? array_intersect_key($quote->response, array_flip(['action', 'name', 'role', 'po_number', 'comment', 'reason'])) : null,
+            // An approved quotation can be ordered once.
+            'can_order' => $quote->status === QuoteStatus::Approved && ! $quote->order()->exists(),
+            // The least token the customer may pay when ordering (they can pay more, up to the total).
+            'order_token_amount' => $quote->status === QuoteStatus::Approved ? app(OrderService::class)->minimumToken((int) $quote->grand_total) : null,
+        ];
+    }
+
+    /**
+     * An order as the customer sees it: status and its two payments (no internal notes).
+     *
+     * @return array<string, mixed>
+     */
+    public static function order(Order $order): array
+    {
+        $service = app(OrderService::class);
+
+        return [
+            'id' => $order->id,
+            'number' => $order->number,
+            'quote_number' => $order->quote->displayNumber(),
+            'status' => $order->status->value,
+            'status_label' => $order->status->customerLabel(),
+            'status_color' => $order->status->getColor(),
+            'placed_at' => $order->placed_at->toIso8601String(),
+            'delivered_at' => $order->delivered_at?->toIso8601String(),
+            'grand_total' => $order->grand_total,
+            'paid' => $order->amountPaid(),
+            'balance' => $order->balanceDue(),
+            'payments' => $order->payments->map(fn (Payment $p) => [
+                'id' => $p->id,
+                'kind' => $p->kind->value,
+                'kind_label' => $p->kind->getLabel(),
+                'amount' => $p->amount,
+                'status' => $p->status->value,
+                'status_label' => $p->status->customerLabel(),
+                'status_color' => $p->status->getColor(),
+                'method_label' => $p->method?->getLabel(),
+                'reference' => $p->reference,
+                'paid_on' => $p->paid_on?->toDateString(),
+                'note' => $p->note,
+                'can_pay' => $service->customerCanPay($p),
+            ])->values()->all(),
         ];
     }
 

@@ -1,3 +1,4 @@
+import { sharedProps } from '@/inertia/page';
 import { mmToUnit, unitToMm, type Unit } from '@/lib/units';
 import { cn } from '@/lib/utils';
 import { Icon } from '@/ui/icon';
@@ -77,6 +78,8 @@ const DEFAULT_CORNERS: Pt[] = [
  */
 /** The customer's last wall photo with its marks, kept in this browser only (never uploaded). */
 interface SavedWall {
+    /** Whose photo it is: never shown to another account on the same browser. */
+    userId: number | string | null;
     blob: Blob;
     corners: Pt[];
     refW: number;
@@ -93,15 +96,23 @@ function wallDb(): Promise<IDBDatabase> {
     });
 }
 
-/** Private windows or blocked storage: the photo simply isn't kept. */
-async function loadWall(): Promise<SavedWall | null> {
+/**
+ * The signed-in account's last wall photo. Another account's photo is deleted, not shown (a shared computer).
+ * Private windows or blocked storage: the photo simply isn't kept.
+ */
+async function loadWall(userId: number | string | null): Promise<SavedWall | null> {
     try {
         const db = await wallDb();
-        return await new Promise((resolve) => {
+        const saved = await new Promise<SavedWall | null>((resolve) => {
             const req = db.transaction('wall').objectStore('wall').get('last');
             req.onsuccess = () => resolve((req.result as SavedWall | undefined) ?? null);
             req.onerror = () => resolve(null);
         });
+        if (saved && (userId === null || saved.userId !== userId)) {
+            await saveWall(null);
+            return null;
+        }
+        return saved;
     } catch {
         return null;
     }
@@ -325,6 +336,8 @@ export class WallPhoto {
     private observer = new ResizeObserver(() => this.measure());
     /** The photo file kept on this device (IndexedDB), so it is still there when the editor or page reopens. */
     private photoBlob: Blob | null = null;
+    /** The signed-in account: the kept photo belongs to it alone. */
+    private userId = (sharedProps()().auth?.user?.id as number | undefined) ?? null;
 
     constructor() {
         inject(DestroyRef).onDestroy(() => {
@@ -334,7 +347,7 @@ export class WallPhoto {
         });
 
         // The last wall photo and its marks come back (stored only in this browser).
-        void loadWall().then((saved) => {
+        void loadWall(this.userId).then((saved) => {
             if (!saved || this.photo()) return;
             this.photoBlob = saved.blob;
             this.objectUrl = URL.createObjectURL(saved.blob);
@@ -350,9 +363,9 @@ export class WallPhoto {
         effect(() => {
             const state = { corners: this.corners(), refW: this.refW(), refH: this.refH(), artCentre: this.artCentre() };
             const blob = this.photo() ? this.photoBlob : null;
-            if (!blob) return;
+            if (!blob || this.userId === null) return;
             if (saveTimer) clearTimeout(saveTimer);
-            saveTimer = setTimeout(() => void saveWall({ blob, ...state }), 400);
+            saveTimer = setTimeout(() => void saveWall({ userId: this.userId, blob, ...state }), 400);
         });
     }
 

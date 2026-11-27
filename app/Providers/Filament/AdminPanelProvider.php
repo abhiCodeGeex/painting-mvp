@@ -28,7 +28,7 @@ class AdminPanelProvider extends PanelProvider
      * in set-up order (what we sell -> what it is made of -> framing -> how it is priced),
      * then reference lists and system. A group only appears once it has at least one item.
      */
-    public const GROUP_SALES = 'Sales — enquiries to quotes';
+    public const GROUP_SALES = 'Sales — enquiries to orders';
 
     public const GROUP_INVENTORY = 'Inventory';
 

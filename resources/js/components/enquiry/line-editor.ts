@@ -689,7 +689,6 @@ function stepOfField(key: string): number {
                                 [heightMm]="pictureH()"
                                 [frame]="parts().frame"
                                 [layers]="parts().layers"
-                                [rebateMm]="rebate()"
                                 [title]="previewTitle()"
                                 [mat]="hasMat() ? parts().mat : null"
                                 [depthMm]="parts().depthMm"
@@ -721,7 +720,7 @@ function stepOfField(key: string): number {
 
                     <!-- footer: price on the left, actions on the right -->
                     <div
-                        class="bg-background flex shrink-0 flex-col gap-3 border-t px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-6 sm:py-4"
+                        class="bg-background flex shrink-0 flex-col gap-2 border-t px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-6 sm:py-4"
                     >
                         <div class="min-w-0">
                             <price-estimate-box [inline]="true" [estimate]="live.estimate()" [loading]="live.loading()" />
@@ -733,15 +732,16 @@ function stepOfField(key: string): number {
                         </div>
                         <div class="flex shrink-0 flex-wrap items-center gap-2 sm:gap-3">
                             @if (step() > 1) {
-                                <button ui-button type="button" variant="ghost" (click)="goTo(step() - 1)">
-                                    <svg [icon]="ArrowLeft" class="size-4" /> Back
+                                <button ui-button type="button" variant="ghost" aria-label="Back" (click)="goTo(step() - 1)">
+                                    <svg [icon]="ArrowLeft" class="size-4" /> <span class="hidden sm:inline">Back</span>
                                 </button>
                             } @else {
                                 <button ui-button type="button" variant="ghost" (click)="cancel()">Cancel</button>
                             }
                             @if (step() < 5) {
                                 <button ui-button type="button" variant="outline" class="sm:min-w-32" (click)="goTo(step() + 1)">
-                                    Next: {{ steps()[step()].label }} <svg [icon]="ArrowRight" class="size-4" />
+                                    <span class="sm:hidden">Next</span><span class="hidden sm:inline">Next: {{ steps()[step()].label }}</span>
+                                    <svg [icon]="ArrowRight" class="size-4" />
                                 </button>
                             }
                             <button ui-button type="submit" class="flex-1 sm:min-w-40 sm:flex-none" [disabled]="form.processing()">
@@ -873,9 +873,12 @@ export class LineEditor {
         const b = this.hasMat() ? this.matBorder() : 0;
         const bottom = this.hasMat() ? (this.parts().mat?.bottom_weight_mm ?? 0) : 0;
         const inside = this.parts().layers.slice(0, i).reduce((sum, l) => sum + layerWidth(l), 0);
-        const add = 2 * (b + this.rebate() + inside);
+        // The inner layer's preview width already includes the rebate gap; the inner frame itself needs it too.
+        const add = 2 * (b + inside + (i === 0 ? (this.options().rebate_allowance_mm ?? 0) : 0));
+        const used = new Set([d.frame_id, ...d.frame_layers.flatMap((l) => [l.frame_id, l.split?.frame_id])]);
         return this.options().frames.filter(
             (f) =>
+                (f.is_active !== false || used.has(f.id)) &&
                 (!f.substrate_ids.length || (d.substrate_id !== null && f.substrate_ids.includes(d.substrate_id))) &&
                 fits(this.pictureW() + add, this.pictureH() + add + bottom, f.max_inner_width_mm, f.max_inner_height_mm),
         );
@@ -915,6 +918,13 @@ export class LineEditor {
         if (d.medium_id && !this.mediums().some((m) => m.id === d.medium_id)) w.push('The chosen medium is not available for this artwork.');
         if (d.substrate_id && !this.substrates().some((x) => x.id === d.substrate_id)) w.push('The chosen surface does not suit this medium.');
         if (d.frame_id && !this.frames().some((f) => f.id === d.frame_id)) w.push('The chosen frame does not fit this size or surface.');
+        // A frame or artwork staff stopped offering: it can stay on this line, but say so.
+        const gone = new Set([d.frame_id, ...d.frame_layers.flatMap((l) => [l.frame_id, l.split?.frame_id])]);
+        for (const f of this.options().frames) {
+            if (gone.has(f.id) && f.is_active === false) w.push(`${f.name} is no longer offered — you can keep it, or choose another frame.`);
+        }
+        if (d.source_type === 'catalog' && this.artwork()?.is_active === false)
+            w.push(`${this.artwork()!.title} is no longer in our catalogue — you can keep it, or choose another artwork.`);
         const misfit = d.frame_id
             ? d.frame_layers.some((l, i) => {
                   const fitting = this.framesFor(i);
@@ -954,7 +964,7 @@ export class LineEditor {
             {
                 step: 2,
                 label: 'Size',
-                value: `${mmToUnit(d.width_mm, d.unit)} × ${mmToUnit(d.height_mm, d.unit)} ${unit}${turned}${d.quantity > 1 ? ' · ×' + d.quantity : ''}`,
+                value: `${mmToUnit(d.width_mm, d.unit)} × ${mmToUnit(d.height_mm, d.unit)} ${unit}${d.size_reference === 'outer' ? ' (outer, incl. frame)' : ''}${turned}${d.quantity > 1 ? ' · ×' + d.quantity : ''}`,
                 missing: false,
             },
             {
@@ -1035,11 +1045,7 @@ export class LineEditor {
     // With "outer size", the picture is what's left inside the mat and frame.
     /** A mat is drawn, sized and sent only with a frame (or frame advice), on a surface that allows one. */
     protected hasMat = computed(() => !!this.d().mat_id && this.matsAllowed() && !this.unframed());
-    /** The rebate gap around the mat/picture when framed (pricing counts it in the outer size). */
-    protected rebate = computed(() => (this.parts().layers.length ? (this.options().rebate_allowance_mm ?? 0) : 0));
-    private surround = computed(
-        () => 2 * (framesWidth(this.parts().frame, this.parts().layers) + this.rebate() + (this.hasMat() ? (this.parts().mat?.border_mm ?? 0) : 0)),
-    );
+    private surround = computed(() => 2 * (framesWidth(this.parts().frame, this.parts().layers) + (this.hasMat() ? (this.parts().mat?.border_mm ?? 0) : 0)));
     protected pictureW = computed(() =>
         this.d().size_reference === 'outer' ? Math.max(50, this.d().width_mm - this.surround()) : this.d().width_mm,
     );
@@ -1096,6 +1102,64 @@ export class LineEditor {
                 // Editing an existing artwork: every step is already filled in.
                 this.step.set(1);
                 this.visited.set(new Set(this.line() ? [1, 2, 3, 4, 5] : [1]));
+            });
+        });
+
+        // A surface that must be framed, with no frame chosen: start on "Advise me" (we suggest a frame) instead
+        // of the save stopping later. Undone if the customer moves to a surface that needs no frame. A saved
+        // line opens exactly as it was saved.
+        let lastSurface: number | null | undefined = undefined;
+        let autoAdvice = false;
+        effect(() => {
+            const open = this.open();
+            const surface = this.d().substrate_id;
+            if (!open) {
+                lastSurface = undefined;
+                autoAdvice = false;
+                return;
+            }
+            untracked(() => {
+                const first = lastSurface === undefined;
+                if (!first && surface === lastSurface) return;
+                lastSurface = surface;
+                if (first && this.line()) return;
+                const d = this.d();
+                const mustFrame = !!this.substrate()?.requires_frame;
+                if (mustFrame && !d.frame_id && !d.frame_advice_requested) {
+                    autoAdvice = true;
+                    this.form.set('frame_advice_requested', true);
+                } else if (!mustFrame && autoAdvice && !d.frame_id && d.frame_advice_requested) {
+                    autoAdvice = false;
+                    this.form.set('frame_advice_requested', false);
+                }
+                // Not a change the customer made: closing right away doesn't ask to discard.
+                if (first) this.snapshot = this.serialise();
+            });
+        });
+
+        // A field the customer changes loses its old error at once (not only after the next save).
+        let before: LineForm | null = null;
+        effect(() => {
+            const d = this.d();
+            untracked(() => {
+                const prev = before;
+                before = d;
+                if (!prev) return;
+                const errors = Object.keys(this.form.errors());
+                if (!errors.length) return;
+                const changed = (Object.keys(d) as (keyof LineForm)[]).filter((k) => JSON.stringify(d[k]) !== JSON.stringify(prev[k])) as string[];
+                if (!changed.length) return;
+                // A new frame choice also answers "must be framed"; a new size answers the size checks.
+                const related: Record<string, string[]> = {
+                    frame_id: ['frame_layers', 'frame_advice_requested', 'substrate_id', 'mat_id'],
+                    width_mm: ['height_mm', 'size_reference', 'artwork_id', 'substrate_id'],
+                    glazing_id: ['substrate_id', 'width_mm', 'height_mm'],
+                    mat_id: ['substrate_id', 'frame_id', 'frame_advice_requested'],
+                };
+                const clear = errors.filter(
+                    (e) => changed.some((c) => e === c || e.startsWith(c + '.')) || (related[e] ?? []).some((c) => changed.includes(c)),
+                );
+                if (clear.length) this.form.clearErrors(...clear);
             });
         });
 
@@ -1191,11 +1255,7 @@ export class LineEditor {
      * on "Advise me" (we suggest one), instead of the save stopping later on a surface that must be framed.
      */
     chooseSource(value: LineForm['source_type']): void {
-        this.form.update((d) => ({
-            ...d,
-            source_type: value,
-            frame_advice_requested: value === 'own_artwork' && !d.frame_id ? true : d.frame_advice_requested,
-        }));
+        this.form.set('source_type', value);
     }
 
     setOwn(key: 'service' | 'condition_notes', value: string): void {

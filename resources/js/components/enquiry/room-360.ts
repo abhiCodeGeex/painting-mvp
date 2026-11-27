@@ -1569,6 +1569,8 @@ export class Room360 implements OnDestroy {
     }
 
     private pictureTexture(url: string | null, picW: number, picH: number, fallback: string | null = null, rotation = 0): THREE.Texture {
+        // The sharper close-up image failed: keep showing the normal picture, not the sample.
+        if (url && fallback && fallback !== url && this.failedPictures.has(url)) return this.pictureTexture(fallback, picW, picH, null, rotation);
         if (!url || this.failedPictures.has(url)) return this.placeholder;
         if (fallback && fallback !== url && !this.textures.has(url) && this.textures.has(fallback)) {
             this.pictureTexture(url, picW, picH); // start loading the sharper one

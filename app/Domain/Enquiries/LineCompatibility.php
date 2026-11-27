@@ -12,6 +12,7 @@ use App\Models\Glazing;
 use App\Models\Mat;
 use App\Models\Medium;
 use App\Models\Substrate;
+use App\Settings\PricingSettings;
 
 /**
  * Checks that the options chosen for an enquiry line fit together (spec §4.3).
@@ -91,10 +92,13 @@ class LineCompatibility
 
         if ($frame) {
             // Every moulding: the inner frame around the picture (+ mat), each outer layer around the
-            // frames inside it. A split layer's two mouldings share one opening.
+            // frames inside it. A split layer's two mouldings share one opening. The first opening also
+            // has the rebate allowance on each side, as in PricingEngine::dimensions, so a frame that is
+            // priced as too small for the piece is also refused here.
             $border = $mat ? (int) ($line['mat_border_mm'] ?? $mat->default_border_mm) : 0;
-            $openW = $width + 2 * $border;
-            $openH = $height + 2 * $border + ($mat?->bottom_weight_mm ?? 0);
+            $allowance = (int) app(PricingSettings::class)->rebate_allowance_mm;
+            $openW = $width + 2 * $border + 2 * $allowance;
+            $openH = $height + 2 * $border + ($mat?->bottom_weight_mm ?? 0) + 2 * $allowance;
             $layers = FrameLayers::normalise($line['frame_layers'] ?? null, (int) $frame->id);
             $frames = Frame::with('substrates')->whereIn('id', FrameLayers::frameIds($layers))->get()->keyBy('id');
             foreach ($layers as $i => $layer) {

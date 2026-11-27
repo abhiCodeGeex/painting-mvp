@@ -41,8 +41,8 @@ export function lineToPiece(options: CatalogOptions, line: EnquiryLine): WallPie
                 <div [class]="h">
                     <h2 [class]="t">All artworks on one wall</h2>
                     <p [class]="d">
-                        {{ lines().length }} artworks to scale in a photoreal room. Drag them to arrange your wall — they snap to each other's edges
-                        and centres. Colours and textures are indicative.
+                        {{ pieces().length }} {{ pieces().length === 1 ? 'piece' : 'pieces' }} to scale in a photoreal room. Drag them to arrange your
+                        wall — they snap to each other's edges and centres. Colours and textures are indicative.
                     </p>
                 </div>
                 @defer (on immediate) {
@@ -61,7 +61,13 @@ export class GalleryWall {
     readonly lines = input.required<EnquiryLine[]>();
     readonly options = input.required<CatalogOptions>();
 
-    protected pieces = computed(() => this.lines().map((line) => lineToPiece(this.options(), line)));
+    protected pieces = computed(() =>
+        this.lines().flatMap((line) => {
+            const piece = lineToPiece(this.options(), line);
+            const copies = Math.min(Math.max(1, line.quantity ?? 1), 6);
+            return Array.from({ length: copies }, (_, n) => (n === 0 ? piece : { ...piece, id: `${line.id}-${n + 1}` }));
+        }),
+    );
     /** The wall colour most lines asked for (falls back to warm white). */
     protected wallColour = computed(() => {
         const counts = new Map<string, number>();

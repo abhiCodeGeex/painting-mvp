@@ -16,6 +16,7 @@ use App\Models\Quote;
 use App\Models\RejectionReason;
 use App\Models\State;
 use App\Models\Substrate;
+use App\Models\Tax;
 use App\Models\User;
 use App\Notifications\NewEnquiryMessage;
 use App\Notifications\QuoteResponded;
@@ -77,7 +78,7 @@ function negotiationEnquiry(Customer $customer): Enquiry
 function sentQuote(Enquiry $enquiry, User $admin): Quote
 {
     $builder = app(QuoteBuilder::class);
-    $quote = $builder->createFromEnquiry($enquiry->fresh(), $admin);
+    $quote = withMargin($builder->createFromEnquiry($enquiry->fresh(), $admin));
     $builder->send($quote, $admin, ['portal', 'email']);
 
     return $quote->fresh();
@@ -190,7 +191,7 @@ test('full negotiation: question, reply, quote, changes, revised quote, approval
 test('approving with optional lines keeps only the ticked ones in the total', function () {
     $enquiry = negotiationEnquiry($this->customer);
     $builder = app(QuoteBuilder::class);
-    $quote = $builder->createFromEnquiry($enquiry, $this->admin);
+    $quote = withMargin($builder->createFromEnquiry($enquiry, $this->admin));
     $line = $quote->lines()->first();
     $extra = $line->replicate();
     $extra->fill(['title' => 'Matching second print', 'is_optional' => true, 'is_selected' => true, 'position' => 2])->save();
@@ -271,7 +272,7 @@ test('approving keeps the tax of the quote the customer saw', function () {
     expect($sent['grand_total'])->toBeGreaterThan(0);
 
     // After sending: the default tax changes and the customer deletes the delivery address.
-    App\Models\Tax::query()->update(['rate_percent' => (float) $sent['tax_rate'] + 6]);
+    Tax::query()->update(['rate_percent' => (float) $sent['tax_rate'] + 6]);
     $enquiry->deliveryAddress->delete();
 
     $this->actingAs($this->customer->user)

@@ -5,8 +5,10 @@ namespace App\Filament\Resources\Sales\Enquiries\Pages;
 use App\Domain\Enquiries\EnquiryWorkflow;
 use App\Domain\Quotes\QuoteBuilder;
 use App\Enums\EnquiryStatus;
+use App\Enums\OrderStatus;
 use App\Enums\Priority;
 use App\Filament\Resources\Sales\Enquiries\EnquiryResource;
+use App\Filament\Resources\Sales\Orders\OrderResource;
 use App\Filament\Resources\Sales\Quotes\QuoteResource;
 use App\Models\Enquiry;
 use App\Models\User;
@@ -56,11 +58,19 @@ class ViewEnquiry extends ViewRecord
                 ->label(fn (): string => $this->enquiry()->quotes()->exists() ? 'Revise quote' : 'Create quote')
                 ->icon('heroicon-o-document-currency-rupee')
                 ->color('success')
-                ->visible(fn (): bool => in_array($this->enquiry()->status, QuoteBuilder::QUOTABLE, true))
+                ->visible(fn (): bool => in_array($this->enquiry()->status, QuoteBuilder::QUOTABLE, true) && ! $this->activeOrder())
                 ->action(function (): void {
                     $quote = app(QuoteBuilder::class)->createFromEnquiry($this->enquiry(), auth()->user());
                     $this->redirect(QuoteResource::getUrl('edit', ['record' => $quote]));
                 }),
+
+            // The order placed from this enquiry's quotation.
+            Action::make('openOrder')
+                ->label(fn (): string => 'Order '.$this->enquiry()->orders()->value('number'))
+                ->icon('heroicon-o-shopping-bag')
+                ->color('success')
+                ->visible(fn (): bool => $this->enquiry()->orders()->exists())
+                ->url(fn (): string => OrderResource::getUrl('view', ['record' => $this->enquiry()->orders()->value('id')])),
 
             Action::make('startReview')
                 ->label('Start review')
@@ -189,5 +199,11 @@ class ViewEnquiry extends ViewRecord
     {
         Notification::make()->title($title)->success()->send();
         $this->record->refresh();
+    }
+
+    /** An order that is not cancelled: the enquiry is settled, so no new quotation. */
+    private function activeOrder(): bool
+    {
+        return $this->enquiry()->orders()->where('status', '!=', OrderStatus::Cancelled)->exists();
     }
 }

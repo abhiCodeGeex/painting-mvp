@@ -6,6 +6,7 @@ use App\Enums\QuoteStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
@@ -118,6 +119,14 @@ class Quote extends Model implements HasMedia
     public function registerMediaCollections(): void
     {
         $this->addMediaCollection('pdf')->useDisk('local')->singleFile();
+    }
+
+    /**
+     * @return HasOne<Order, $this>
+     */
+    public function order(): HasOne
+    {
+        return $this->hasOne(Order::class);
     }
 
     public function displayNumber(): string

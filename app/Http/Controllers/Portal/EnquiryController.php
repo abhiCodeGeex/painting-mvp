@@ -7,6 +7,7 @@ use App\Domain\Pricing\CustomerEstimate;
 use App\Enums\AddressKind;
 use App\Enums\BudgetRange;
 use App\Enums\EnquiryStatus;
+use App\Enums\PaymentMethod;
 use App\Enums\PreferredContact;
 use App\Enums\ProjectType;
 use App\Filament\Resources\Sales\Enquiries\EnquiryResource;
@@ -14,6 +15,7 @@ use App\Http\Presenters\CatalogOptions;
 use App\Http\Presenters\EnquiryPresenter;
 use App\Models\Enquiry;
 use App\Models\Message;
+use App\Models\Order;
 use App\Models\Quote;
 use App\Models\RejectionReason;
 use Filament\Notifications\Notification;
@@ -33,7 +35,7 @@ class EnquiryController extends PortalController
     {
         $enquiries = $this->customer($request)->enquiries()
             ->withCount(['lines', 'messages as unread_count' => fn (Builder $q) => $q->where('from_staff', true)->whereNull('read_at')->where('kind', '!=', 'system')])
-            ->with(['lines' => fn ($q) => $q->with(['artwork.media', 'media'])])
+            ->with(['lines' => fn ($q) => $q->with(['artwork.media', 'media']), 'orders'])
             ->latest('updated_at')
             ->get();
 
@@ -74,7 +76,9 @@ class EnquiryController extends PortalController
             'messages' => $enquiry->messages()->with('media', 'author')->get()->map(fn (Message $m) => EnquiryPresenter::message($m))->values(),
             'quotes' => ($quotes = $enquiry->quotes()->whereNotNull('sent_at')->with('lines', 'extras')->get())
                 ->map(fn (Quote $q) => EnquiryPresenter::quote($q, (int) $quotes->max('version')))->values(),
-            'options' => CatalogOptions::forEditor(),
+            'options' => CatalogOptions::forEditor($enquiry),
+            'orders' => $enquiry->orders()->with('payments', 'quote')->get()->map(fn (Order $o) => EnquiryPresenter::order($o))->values(),
+            'paymentMethods' => collect(PaymentMethod::options())->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values(),
             'rejectionReasons' => RejectionReason::query()->where('is_active', true)->orderBy('sort_order')->orderBy('name')
                 ->get(['id', 'name', 'requires_comment'])->values(),
         ]);
@@ -109,7 +113,7 @@ class EnquiryController extends PortalController
             ] : null,
             'enquiry' => EnquiryPresenter::detail($enquiry),
             'estimate' => app(CustomerEstimate::class)->forEnquiry($enquiry),
-            'options' => CatalogOptions::forEditor(),
+            'options' => CatalogOptions::forEditor($enquiry),
             'projectOptions' => CatalogOptions::forProject(),
             'addresses' => $customer->addresses()->with('state')->where('kind', AddressKind::Delivery)->orderByDesc('is_default')->get()
                 ->map(fn ($a) => EnquiryPresenter::address($a))->values(),
@@ -119,7 +123,7 @@ class EnquiryController extends PortalController
     /**
      * Saves the project details of a draft (step 1 of the wizard).
      */
-    public function update(Request $request, Enquiry $enquiry): RedirectResponse
+    public function update(Request $request, Enquiry $enquiry): SymfonyResponse
     {
         $this->authorizeEditor($request, $enquiry);
 
@@ -139,6 +143,11 @@ class EnquiryController extends PortalController
         ]);
 
         $enquiry->update($data);
+
+        // The editor's background save as you type: no page reload and no "Saved." message.
+        if ($request->hasHeader('X-Autosave')) {
+            return response()->noContent();
+        }
 
         return back()->with('success', 'Saved.');
     }

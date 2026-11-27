@@ -27,6 +27,26 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
     let timer: ReturnType<typeof setTimeout> | null = null;
     /** The options of the price on screen: typing a title or notes doesn't change them, so no new request. */
     let lastBody: string | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    /** The price couldn't be updated: say so, and ask again in a few seconds (once per change). */
+    const stale = (ctrl: AbortController) => {
+        estimate.update((prev) => ({
+            ...(prev ?? ({} as LineEstimate)),
+            invalid: true,
+            invalid_message: 'Couldn’t update the price — trying again…',
+        }));
+        const body = lastBody;
+        lastBody = null;
+        if (retry) clearTimeout(retry);
+        retry = setTimeout(() => {
+            if (controller === ctrl && body !== null && lastBody === null) {
+                lastBody = null;
+                bump.update((n) => n + 1);
+            }
+        }, 4000);
+    };
+    /** Re-runs the request effect for a retry. */
+    const bump = signal(0);
 
     effect(() => {
         if (!enabled()) {
@@ -40,6 +60,7 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
         }
         const body = JSON.stringify(payload());
         const id = enquiryId();
+        bump();
         if (body === lastBody) return;
         lastBody = body;
         if (timer) clearTimeout(timer);
@@ -69,11 +90,12 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                     const first = json?.errors ? Object.values(json.errors)[0]?.[0] : json?.message;
                     estimate.update((prev) => ({ ...(prev ?? ({} as LineEstimate)), invalid: true, invalid_message: first }));
                 } else if (controller === ctrl) {
-                    // Busy or offline: try again on the next change.
-                    lastBody = null;
+                    // Busy, expired session or a server error: don't show the old price as current; try again.
+                    stale(ctrl);
                 }
             } catch {
-                /* aborted or offline: ignore */
+                // Offline (an aborted request is a newer one taking over: nothing to do).
+                if (!ctrl.signal.aborted && controller === ctrl) stale(ctrl);
             } finally {
                 if (controller === ctrl) loading.set(false);
             }
@@ -82,6 +104,7 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
 
     inject(DestroyRef).onDestroy(() => {
         if (timer) clearTimeout(timer);
+        if (retry) clearTimeout(retry);
         controller?.abort();
     });
 
@@ -114,7 +137,7 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                                 }
                             </div>
                             @if (qty() > 1) {
-                                <div class="text-sm tabular-nums">
+                                <div [class]="inline() ? 'hidden text-sm tabular-nums sm:block' : 'text-sm tabular-nums'">
                                     {{ qty() }} pieces: <strong>{{ range(est.line_low, est.line_high) }}</strong>
                                     @if (est.quantity_discount_percent) {
                                         <span class="ml-1 text-xs text-green-700 dark:text-green-400"
@@ -167,10 +190,10 @@ export function liveEstimate(enquiryId: Signal<number>, payload: Signal<Record<s
                         </ul>
                     }
                     @if (pendingText(est); as pending) {
-                        <p class="text-muted-foreground mt-2 text-xs">Not included yet: {{ pending }}.</p>
+                        <p [class]="'text-muted-foreground mt-2 text-xs' + (inline() ? ' hidden sm:block' : '')">Not included yet: {{ pending }}.</p>
                     }
                     @if (artistPending(est)) {
-                        <p class="text-muted-foreground mt-2 text-xs">
+                        <p [class]="'text-muted-foreground mt-2 text-xs' + (inline() ? ' hidden sm:block' : '')">
                             Includes the range of our artists' fees; we confirm your artist in the quotation.
                         </p>
                     }

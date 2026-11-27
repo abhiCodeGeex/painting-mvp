@@ -60,6 +60,14 @@ class Enquiry extends Model implements HasMedia
     }
 
     /** The newest quote version that has been sent to the customer. */
+    /**
+     * @return HasMany<Order, $this>
+     */
+    public function orders(): HasMany
+    {
+        return $this->hasMany(Order::class)->latest('id');
+    }
+
     public function latestSentQuote(): ?Quote
     {
         return $this->quotes()->whereNotNull('sent_at')->first();

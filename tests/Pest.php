@@ -1,5 +1,7 @@
 <?php
 
+use App\Domain\Quotes\QuoteBuilder;
+use App\Models\Quote;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -47,4 +49,17 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/**
+ * Staff enter a margin on every quote line before sending (it starts empty): price = cost + labour + margin.
+ */
+function withMargin(Quote $quote, int $margin = 100_000): Quote
+{
+    foreach ($quote->lines()->whereNull('margin_amount')->get() as $line) {
+        $price = (int) $line->unit_cost + (int) $line->labour_amount + $margin;
+        $line->update(['margin_amount' => $margin, 'unit_price' => $price, 'calculated_unit_price' => $price]);
+    }
+
+    return app(QuoteBuilder::class)->recalculate($quote->fresh());
 }

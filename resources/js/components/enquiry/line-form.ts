@@ -64,7 +64,12 @@ export function initialLineForm(line: EnquiryLine | null, options: CatalogOption
         hi_res: null,
         rights_confirmed: line?.rights_confirmed ?? false,
         unit: line?.unit ?? 'cm',
-        size_reference: line?.size_reference ?? 'image',
+        // A fixed-size artwork comes in its listed (picture) sizes only: never an outer size, also for lines
+        // saved that way before (the choice is hidden for them).
+        size_reference:
+            line?.source_type === 'catalog' && options.artworks.find((a) => a.id === line.artwork_id)?.allow_custom_size === false
+                ? 'image'
+                : (line?.size_reference ?? 'image'),
         // Saved as the painting's own size; the form shows it as it hangs (swapped when turned 90°/270°).
         width_mm: (turnedSideways(line) ? line?.height_mm : line?.width_mm) ?? 500,
         height_mm: (turnedSideways(line) ? line?.width_mm : line?.height_mm) ?? 700,

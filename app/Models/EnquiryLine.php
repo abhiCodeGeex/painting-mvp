@@ -6,6 +6,7 @@ use App\Domain\Pricing\FrameLayers;
 use App\Enums\EdgeStyle;
 use App\Enums\LengthUnit;
 use App\Enums\LineSource;
+use App\Enums\OwnArtworkService;
 use App\Enums\SizeReference;
 use App\Support\MediaUrl;
 use Illuminate\Database\Eloquent\Model;
@@ -180,8 +181,19 @@ class EnquiryLine extends Model implements HasMedia
         return match ($this->source_type) {
             LineSource::Catalog => $this->artwork?->title ?? 'Catalog artwork',
             LineSource::CustomCreation => $this->title ?: 'New custom creation',
-            LineSource::OwnArtwork => $this->title ?: 'Customer artwork',
+            // Said to the customer, so in their words: what we will do with the piece they send.
+            LineSource::OwnArtwork => $this->title ?: ($this->isFrameOnly() ? 'Your artwork (to frame)' : 'Your artwork (to reproduce & frame)'),
         };
+    }
+
+    /**
+     * The customer's own piece, framed as it is: nothing is printed, so there is no print medium.
+     * Anything but "reproduce & frame" counts, as in pricing (PricingEngine prices it as framing only).
+     */
+    public function isFrameOnly(): bool
+    {
+        return $this->source_type === LineSource::OwnArtwork
+            && ($this->own_artwork['service'] ?? null) !== OwnArtworkService::ReproduceAndFrame->value;
     }
 
     /**

@@ -134,6 +134,8 @@ export interface EnquiryMessage {
 
 export interface CatalogArtwork {
     id: number;
+    /** False for an artwork no longer offered, sent only because a line of this enquiry already has it. */
+    is_active?: boolean;
     code: string;
     title: string;
     artist: string | null;
@@ -168,6 +170,8 @@ export interface FrameLayerInput {
 
 export interface CatalogFrame {
     id: number;
+    /** False for a frame no longer offered, sent only because a line of this enquiry already has it. */
+    is_active?: boolean;
     code: string;
     name: string;
     colour: string;
@@ -317,6 +321,40 @@ export interface CustomerQuote {
     is_expired: boolean;
     responded_at: string | null;
     response: { action: string; name?: string; role?: string; po_number?: string; comment?: string; reason?: string } | null;
+    /** Approved and not ordered yet. */
+    can_order: boolean;
+    /** Token due when ordering (approved quotes only). */
+    order_token_amount: number | null;
+}
+
+export interface CustomerPayment {
+    id: number;
+    kind: 'token' | 'final';
+    kind_label: string;
+    amount: number;
+    status: 'due' | 'submitted' | 'received' | 'rejected';
+    status_label: string;
+    status_color: string;
+    method_label: string | null;
+    reference: string | null;
+    paid_on: string | null;
+    note: string | null;
+    can_pay: boolean;
+}
+
+export interface CustomerOrder {
+    id: number;
+    number: string;
+    quote_number: string;
+    status: string;
+    status_label: string;
+    status_color: string;
+    placed_at: string;
+    delivered_at: string | null;
+    grand_total: number;
+    paid: number;
+    balance: number;
+    payments: CustomerPayment[];
 }
 
 export interface RejectionReasonOption {

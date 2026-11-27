@@ -64,15 +64,25 @@ export function frameLayersOf(ids: { frame_id: number | null; frame_layers?: Fra
     return ids.frame_id ? [{ frame_id: ids.frame_id, split: null }] : [];
 }
 
-/** Preview layers for the chosen frame layers (unknown frames are left out). */
+/**
+ * Preview layers for the chosen frame layers (unknown frames are left out). The inner layer is drawn
+ * `rebate` mm wider: the small gap pricing leaves between the mat/picture and the frame, so every
+ * preview's finished size matches the priced one.
+ */
 export function previewLayers(options: CatalogOptions, layers: FrameLayerInput[]): PreviewLayer[] {
     const find = (id: number) => options.frames.find((f) => f.id === id);
+    const rebate = options.rebate_allowance_mm ?? 0;
+    const wider = (f: PreviewFrame, i: number): PreviewFrame => (i === 0 && rebate ? { ...f, width_mm: f.width_mm + rebate } : f);
     const out: PreviewLayer[] = [];
     for (const l of layers) {
         const primary = find(l.frame_id);
         if (!primary) continue;
         const second = l.split ? find(l.split.frame_id) : undefined;
-        out.push({ frame: previewFrame(primary), split: second && l.split ? { frame: previewFrame(second), mode: l.split.mode } : null });
+        const i = out.length;
+        out.push({
+            frame: wider(previewFrame(primary), i),
+            split: second && l.split ? { frame: wider(previewFrame(second), i), mode: l.split.mode } : null,
+        });
     }
     return out;
 }
@@ -105,8 +115,7 @@ export function pictureSize(options: CatalogOptions, line: EnquiryLine): { width
     const hung = hungSize(line);
     if (line.size_reference !== 'outer') return hung;
     const parts = previewParts(options, line);
-    const rebate = parts.layers.length ? (options.rebate_allowance_mm ?? 0) : 0;
-    const surround = 2 * (framesWidth(parts.frame, parts.layers) + rebate + (parts.mat?.border_mm ?? 0));
+    const surround = 2 * (framesWidth(parts.frame, parts.layers) + (parts.mat?.border_mm ?? 0));
     return {
         width_mm: Math.max(50, hung.width_mm - surround),
         height_mm: Math.max(50, hung.height_mm - surround - (parts.mat?.bottom_weight_mm ?? 0)),
@@ -140,7 +149,8 @@ export function previewParts(
     const glazing = options.glazings.find((g) => g.id === ids.glazing_id) ?? null;
 
     return {
-        frame: frame ? previewFrame(frame) : null,
+        // The inner frame includes the rebate gap, as its layer does (see previewLayers).
+        frame: frame ? { ...previewFrame(frame), width_mm: frame.width_mm + (options.rebate_allowance_mm ?? 0) } : null,
         layers: previewLayers(options, frameLayersOf(ids)),
         mat: mat
             ? {
@@ -156,17 +166,10 @@ export function previewParts(
     };
 }
 
-/** Outer size (mm) of the finished piece: picture + mat + rebate gap + frame (all layers, when stacked). */
-export function outerSize(
-    widthMm: number,
-    heightMm: number,
-    frame: PreviewFrame | null,
-    mat: PreviewMat | null,
-    layers?: PreviewLayer[] | null,
-    rebateMm = 0,
-) {
+/** Outer size (mm) of the finished piece: picture + mat + frame (all layers, when stacked; the inner one includes the rebate gap). */
+export function outerSize(widthMm: number, heightMm: number, frame: PreviewFrame | null, mat: PreviewMat | null, layers?: PreviewLayer[] | null) {
     const m = mat?.border_mm ?? 0;
-    const f = framesWidth(frame, layers) + (frame || layers?.length ? rebateMm : 0);
+    const f = framesWidth(frame, layers);
     return {
         width: widthMm + 2 * m + 2 * f,
         height: heightMm + 2 * m + (mat?.bottom_weight_mm ?? 0) + 2 * f,

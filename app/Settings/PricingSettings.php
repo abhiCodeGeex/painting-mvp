@@ -54,6 +54,9 @@ class PricingSettings extends Settings
 
     public string $default_quote_terms;
 
+    /** Fixed token amount paid when an order is placed (paise); the rest is due on delivery. */
+    public int $order_token_amount;
+
     public static function group(): string
     {
         return 'pricing';

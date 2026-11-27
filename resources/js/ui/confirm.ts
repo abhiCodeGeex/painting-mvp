@@ -1,8 +1,10 @@
+import { InertiaRouter } from '@/inertia/router';
 import {
     ApplicationRef,
     ChangeDetectionStrategy,
     Component,
     createComponent,
+    effect,
     EnvironmentInjector,
     inject,
     Injectable,
@@ -55,7 +57,7 @@ export class ConfirmDialog {
     protected readonly footer = DIALOG_FOOTER;
     private answered = false;
 
-    protected answer(ok: boolean): void {
+    answer(ok: boolean): void {
         if (this.answered) return;
         this.answered = true;
         this.open.set(false);
@@ -71,11 +73,12 @@ export class ConfirmDialog {
 export class Confirm {
     private appRef = inject(ApplicationRef);
     private injector = inject(EnvironmentInjector);
+    private router = inject(InertiaRouter);
 
     ask(options: ConfirmOptions): Promise<boolean> {
         return new Promise((resolve) => {
             let ref: ComponentRef<ConfirmDialog> | null = null;
-            const done = (ok: boolean) => {
+            let done = (ok: boolean) => {
                 resolve(ok);
                 // Let the dialog close before it is removed.
                 setTimeout(() => {
@@ -86,6 +89,19 @@ export class Confirm {
                 });
             };
             ref = createComponent(ConfirmDialog, { environmentInjector: this.injector });
+            // Leaving the page (a link, Back) answers "no": never act on a page the customer has left.
+            const startUrl = this.router.page().url;
+            const watch = effect(
+                () => {
+                    if (this.router.page().url !== startUrl) ref?.instance.answer(false);
+                },
+                { injector: this.injector },
+            );
+            const answered = done;
+            done = (ok: boolean) => {
+                watch.destroy();
+                answered(ok);
+            };
             ref.setInput('options', options);
             ref.setInput('done', done);
             this.appRef.attachView(ref.hostView);

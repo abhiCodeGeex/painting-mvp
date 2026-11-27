@@ -197,6 +197,8 @@ export class ProjectStep {
     readonly projectOptions = input.required<ProjectOptions>();
     readonly addresses = input.required<Address[]>();
     readonly done = output<void>();
+    /** The project details were saved in the background (the page shows the new name at once). */
+    readonly autosaved = output<string>();
 
     private router = inject(InertiaRouter);
     protected addressOpen = signal(false);
@@ -223,24 +225,26 @@ export class ProjectStep {
             const addresses = this.addresses();
             if (initialised) return;
             initialised = true;
+            // What the server has. Only an address that is still listed counts (one deleted in Settings can't
+            // be shown or saved).
+            const onServer = {
+                project_name: e.project_name,
+                project_type: e.project_type ?? 'home',
+                delivery_address_id: addresses.some((a) => a.id === e.delivery_address_id) ? String(e.delivery_address_id) : '',
+                required_by: e.required_by ?? '',
+                budget_range: e.budget_range ?? '',
+                installation_needed: e.installation_needed,
+                preferred_contact: e.preferred_contact ?? 'email',
+                notes: e.notes ?? '',
+            };
+            this.saved = JSON.stringify(onServer);
+            // With no address yet, the first one is pre-selected and, being a change, saved too.
             untracked(() =>
                 this.form.setAll({
-                    project_name: e.project_name,
-                    project_type: e.project_type ?? 'home',
-                    // Only an address that is still listed (one deleted in Settings can't be shown or saved).
-                    delivery_address_id: addresses.some((a) => a.id === e.delivery_address_id)
-                        ? String(e.delivery_address_id)
-                        : addresses[0]
-                          ? String(addresses[0].id)
-                          : '',
-                    required_by: e.required_by ?? '',
-                    budget_range: e.budget_range ?? '',
-                    installation_needed: e.installation_needed,
-                    preferred_contact: e.preferred_contact ?? 'email',
-                    notes: e.notes ?? '',
+                    ...onServer,
+                    delivery_address_id: onServer.delivery_address_id || (addresses[0] ? String(addresses[0].id) : ''),
                 }),
             );
-            this.saved = JSON.stringify(this.form.data());
         });
 
         // "Saved automatically as you go": a moment after the last change, the project details are saved
@@ -250,9 +254,7 @@ export class ProjectStep {
             const data = this.form.data();
             if (!this.saved || JSON.stringify(data) === this.saved || !data.project_name.trim()) return;
             if (autosave) clearTimeout(autosave);
-            autosave = setTimeout(() => {
-                if (!this.form.processing()) this.saveThen(() => undefined);
-            }, 1200);
+            autosave = setTimeout(() => void this.quietSave(), 1200);
         });
         // Closing or reloading the tab with changes not saved yet: the browser asks first.
         const beforeUnload = (e: BeforeUnloadEvent) => {
@@ -262,6 +264,8 @@ export class ProjectStep {
         inject(DestroyRef).onDestroy(() => {
             window.removeEventListener('beforeunload', beforeUnload);
             if (autosave) clearTimeout(autosave);
+            // Leaving the step or the page (a link, another step): what was typed is still saved.
+            void this.quietSave();
         });
 
         // A newly added address is selected automatically.
@@ -286,13 +290,73 @@ export class ProjectStep {
             next();
             return;
         }
+        // Remember exactly what was sent: anything typed while it saves still counts as not saved.
+        const sent = JSON.stringify(this.form.data());
         this.form.put(route('portal.enquiries.update', this.enquiry().id), {
             preserveScroll: true,
             onSuccess: () => {
-                this.saved = JSON.stringify(this.form.data());
+                this.saved = sent;
                 next();
             },
         });
+    }
+
+    /**
+     * Background save as you type: a plain request (not a page visit), so it never cancels a link the
+     * customer clicks, shows no "Saved." message, and still runs while the page is being left.
+     * Resolves false when the details are not valid yet (the errors are shown).
+     */
+    async quietSave(): Promise<boolean> {
+        // One save at a time; one that finishes saves again if the form changed meanwhile (even back to
+        // what was saved before the save started).
+        if (this.saving) return this.saving.then(() => this.quietSave());
+        this.saving = this.sendQuietSave();
+        try {
+            return await this.saving;
+        } finally {
+            this.saving = null;
+        }
+    }
+
+    private saving: Promise<boolean> | null = null;
+
+    private async sendQuietSave(): Promise<boolean> {
+        const data = this.form.data();
+        const sent = JSON.stringify(data);
+        if (!this.saved || sent === this.saved) return true;
+        if (!data.project_name.trim()) return false;
+        try {
+            const xsrf = decodeURIComponent(document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/)?.[1] ?? '');
+            const res = await fetch(route('portal.enquiries.update', this.enquiry().id), {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-XSRF-TOKEN': xsrf,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-Autosave': '1',
+                },
+                body: sent,
+                credentials: 'same-origin',
+                keepalive: true,
+            });
+            if (res.ok) {
+                this.saved = sent;
+                this.form.clearErrors();
+                this.autosaved.emit(data.project_name);
+                // Typed while it saved: save that too (the change watcher may have seen "no change" meanwhile).
+                if (JSON.stringify(this.form.data()) !== sent) setTimeout(() => void this.quietSave(), 0);
+                return true;
+            }
+            if (res.status === 422) {
+                const json = (await res.json().catch(() => null)) as { errors?: Record<string, string[]> } | null;
+                const errors = Object.fromEntries(Object.entries(json?.errors ?? {}).map(([k, v]) => [k, v[0]]));
+                this.form.errors.set(errors as never);
+            }
+        } catch {
+            /* offline: the next change (or leaving) tries again */
+        }
+        return false;
     }
 }
 
@@ -334,7 +398,7 @@ export class ProjectStep {
                 }
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <h1 class="text-2xl font-semibold tracking-tight">{{ enquiry().project_name }}</h1>
+                        <h1 class="text-2xl font-semibold tracking-tight">{{ projectName() ?? enquiry().project_name }}</h1>
                         <p class="text-muted-foreground text-sm">
                             @if (isDraft()) {
                                 Draft — saved automatically as you go. Nothing is sent until you press “Send enquiry”.
@@ -386,6 +450,7 @@ export class ProjectStep {
                             [projectOptions]="props().projectOptions"
                             [addresses]="props().addresses"
                             (done)="step.set(1)"
+                            (autosaved)="projectName.set($event)"
                         />
                     }
                     @case (1) {
@@ -544,12 +609,18 @@ export default class EditEnquiry {
     protected enquiry = computed(() => this.props().enquiry);
     protected step = signal(this.props().enquiry.lines.length > 0 ? 1 : 0);
     private projectStep = viewChild(ProjectStep);
+    /** The project name as just saved in the background (the page props catch up on the next visit). */
+    protected projectName = signal<string | null>(null);
 
     /** Step tabs: leaving the project step saves its changes first (it says "saved automatically as you go"). */
     protected goStep(i: number): void {
         const project = this.projectStep();
-        if (this.step() === 0 && i !== 0 && project) project.saveThen(() => this.step.set(i));
-        else this.step.set(i);
+        // Leaving the project step: save it quietly first; with an error the step stays open showing it.
+        if (this.step() === 0 && i !== 0 && project) {
+            void project.quietSave().then((ok) => {
+                if (ok) this.step.set(i);
+            });
+        } else this.step.set(i);
     }
     protected readonly steps = ['Project', 'Artworks', 'Review & send'];
     protected editing = signal<EnquiryLine | null>(null);

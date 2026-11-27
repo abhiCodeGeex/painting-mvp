@@ -5,17 +5,15 @@
     $delivery = $quote->delivery_snapshot ?? [];
     $mandatory = $quote->lines->where('is_optional', false);
     $optional = $quote->lines->where('is_optional', true);
-    // Work after the artwork and labour are already in the unit price; listing them tells the
-    // customer what that price covers without adding rows to the table.
+    // Labour is already in the unit price; listing it tells the customer what that price covers
+    // without adding rows to the table. Old lines may still hold "work after the artwork", but that
+    // is no longer priced, so it is not listed.
     $includes = function (\App\Models\QuoteLine $line): ?string {
-        $parts = collect($line->work_items ?? [])
-            ->filter(fn ($i) => (int) ($i['amount'] ?? 0) > 0 && filled($i['name'] ?? null))
-            ->map(fn ($i) => $i['name'].' '.Money::format((int) $i['amount']));
-        if ((int) $line->labour_amount > 0) {
-            $parts->push('Labour '.Money::format((int) $line->labour_amount));
+        if ((int) $line->labour_amount <= 0) {
+            return null;
         }
 
-        return $parts->isEmpty() ? null : 'Includes: '.$parts->implode(' · ').($line->quantity > 1 ? ' per piece' : '');
+        return 'Includes: Labour '.Money::format((int) $line->labour_amount).($line->quantity > 1 ? ' per piece' : '');
     };
 @endphp
 <!doctype html>

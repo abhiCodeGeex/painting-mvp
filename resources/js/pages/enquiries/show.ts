@@ -1,5 +1,6 @@
 import { GalleryWall } from '@/components/enquiry/gallery-wall';
 import { LineCard } from '@/components/enquiry/line-card';
+import { OrderCard, PlaceOrder } from '@/components/enquiry/order-card';
 import { pictureSize, previewParts } from '@/components/enquiry/preview-helpers';
 import { QuoteResponse } from '@/components/enquiry/quote-response';
 import { WallPreview } from '@/components/enquiry/wall-preview';
@@ -9,7 +10,7 @@ import { pageProps } from '@/inertia/page';
 import { InertiaRouter } from '@/inertia/router';
 import { AppLayout } from '@/layouts/app-layout';
 import { formatDate, formatDateTime, formatInr } from '@/lib/units';
-import type { CatalogOptions, CustomerQuote, EnquiryDetail, EnquiryLine, EnquiryMessage, RejectionReasonOption } from '@/types/portal';
+import type { CatalogOptions, CustomerOrder, CustomerQuote, EnquiryDetail, EnquiryLine, EnquiryMessage, RejectionReasonOption } from '@/types/portal';
 import { DIALOG_DESCRIPTION, DIALOG_HEADER, DIALOG_TITLE, UiDialog } from '@/ui/dialog';
 import { FormField } from '@/ui/field';
 import { Icon } from '@/ui/icon';
@@ -23,6 +24,8 @@ interface Props {
     messages: EnquiryMessage[];
     options: CatalogOptions;
     quotes: CustomerQuote[];
+    orders?: CustomerOrder[];
+    paymentMethods?: { value: string; label: string }[];
     rejectionReasons?: RejectionReasonOption[];
 }
 
@@ -30,7 +33,7 @@ interface Props {
 
 @Component({
     selector: 'quote-card',
-    imports: [Icon, UI, QuoteResponse],
+    imports: [Icon, UI, QuoteResponse, PlaceOrder],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <section id="quote" class="overflow-hidden rounded-xl border-2 border-emerald-300 dark:border-emerald-800">
@@ -123,6 +126,9 @@ interface Props {
                     <p class="bg-muted mt-4 rounded-lg p-3 text-sm whitespace-pre-line">{{ q().note_to_customer }}</p>
                 }
                 <quote-response [quote]="q()" [enquiryId]="enquiryId()" [reasons]="reasons()" [roleRequired]="roleRequired()" />
+                @if (q().can_order) {
+                    <place-order [quote]="q()" [enquiryId]="enquiryId()" />
+                }
                 <p class="text-muted-foreground mt-3 text-xs">Questions about this quotation? Reply in the conversation below.</p>
             </div>
         </section>
@@ -323,7 +329,21 @@ export class CancelDialog {
 /* ---------------------------- the page ---------------------------- */
 
 @Component({
-    imports: [InertiaHead, AppLayout, UI, Icon, StatusBadge, LineCard, WallPreview, UiDialog, QuoteCard, Conversation, CancelDialog, GalleryWall],
+    imports: [
+        InertiaHead,
+        AppLayout,
+        UI,
+        Icon,
+        StatusBadge,
+        LineCard,
+        WallPreview,
+        UiDialog,
+        QuoteCard,
+        OrderCard,
+        Conversation,
+        CancelDialog,
+        GalleryWall,
+    ],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <app-layout [breadcrumbs]="breadcrumbs()">
@@ -354,6 +374,9 @@ export class CancelDialog {
                     </a>
                 }
 
+                @for (o of props().orders ?? []; track o.id) {
+                    <order-card [order]="o" [enquiryId]="enquiry().id" [methods]="props().paymentMethods ?? []" />
+                }
                 @for (q of currentQuotes(); track q.id) {
                     <quote-card
                         [quote]="q"

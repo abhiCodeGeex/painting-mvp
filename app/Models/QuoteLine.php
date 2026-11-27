@@ -20,6 +20,11 @@ class QuoteLine extends Model
             $line->discount_amount ??= 0;
             $line->labour_amount ??= 0;
             $line->unit_price ??= 0;
+            // A re-priced line is worked out without the old "work after the artwork" list, so keeping
+            // the list would show the customer charges that are no longer in the price.
+            if ($line->exists && $line->isDirty('calculated_unit_price')) {
+                $line->work_items = null;
+            }
         });
     }
 
@@ -58,6 +63,7 @@ class QuoteLine extends Model
             'quantity' => 'integer',
             'unit_cost' => 'integer',
             'labour_amount' => 'integer',
+            'margin_amount' => 'integer',
             'calculated_unit_price' => 'integer',
             'unit_price' => 'integer',
             'discount_amount' => 'integer',

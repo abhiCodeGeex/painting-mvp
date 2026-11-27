@@ -395,7 +395,10 @@ export class CatalogPicker {
         const q = this.query().trim().toLowerCase();
         const c = this.category();
         return this.options().artworks.filter(
-            (a) => (!q || `${a.title} ${a.artist ?? ''} ${a.code}`.toLowerCase().includes(q)) && (!c || a.categories.includes(c)),
+            (a) =>
+                a.is_active !== false &&
+                (!q || `${a.title} ${a.artist ?? ''} ${a.code}`.toLowerCase().includes(q)) &&
+                (!c || a.categories.includes(c)),
         );
     });
     protected visible = computed(() => this.list().slice(0, this.limit()));
